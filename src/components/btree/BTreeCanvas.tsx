@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { BTreeNodeData, HighlightType } from '@/structures/btree/types';
 import { cn } from '@/lib/utils';
@@ -11,7 +11,9 @@ interface FrameData {
   nodeId?: string;
   type?: HighlightType;
   path?: string[];
+  insertingKey?: number;
   leafChain: { from: string; to: string }[];
+  splitInfo?: { leftId: string; rightId: string; upKey: number } | null;
 }
 
 interface BTreeCanvasProps {
@@ -32,7 +34,7 @@ const LEVEL_GAP = 90;
 const NODE_GAP = 30;
 
 function nodeWidth(keys: number[]): number {
-  return NODE_PADDING_X * 2 + keys.length * KEY_WIDTH + (keys.length - 1) * KEY_GAP;
+  return NODE_PADDING_X * 2 + Math.max(keys.length, 1) * KEY_WIDTH + Math.max(keys.length - 1, 0) * KEY_GAP;
 }
 
 function layoutTree(
@@ -84,18 +86,31 @@ function layoutTree(
 
 function highlightColor(type: HighlightType | undefined): string {
   switch (type) {
-    case 'searching': return 'border-blue-500 bg-blue-50 shadow-[0_0_0_3px_rgba(59,130,246,0.3)]';
-    case 'splitting': return 'border-red-500 bg-red-50 shadow-[0_0_0_3px_rgba(239,68,68,0.3)] animate-pulse';
-    case 'merging': return 'border-orange-500 bg-orange-50 shadow-[0_0_0_3px_rgba(249,115,22,0.3)]';
-    case 'borrowing': return 'border-amber-500 bg-amber-50 shadow-[0_0_0_3px_rgba(245,158,11,0.3)]';
-    case 'found': return 'border-green-500 bg-green-50 shadow-[0_0_0_3px_rgba(34,197,94,0.4)]';
-    case 'inserting': return 'border-emerald-500 bg-emerald-50 shadow-[0_0_0_3px_rgba(16,185,129,0.3)]';
+    case 'searching': return 'border-blue-500 bg-blue-50';
+    case 'splitting': return 'border-red-500 bg-red-50';
+    case 'merging': return 'border-orange-500 bg-orange-50';
+    case 'borrowing': return 'border-amber-500 bg-amber-50';
+    case 'found': return 'border-green-500 bg-green-50';
+    case 'inserting': return 'border-emerald-500 bg-emerald-50';
     default: return 'border-slate-300 bg-white';
+  }
+}
+
+function highlightShadow(type: HighlightType | undefined): string {
+  switch (type) {
+    case 'searching': return '0 0 0 3px rgba(59,130,246,0.3), 0 0 12px rgba(59,130,246,0.2)';
+    case 'splitting': return '0 0 0 3px rgba(239,68,68,0.4), 0 0 16px rgba(239,68,68,0.3), 0 0 24px rgba(239,68,68,0.15)';
+    case 'merging': return '0 0 0 3px rgba(249,115,22,0.3), 0 0 12px rgba(249,115,22,0.2)';
+    case 'borrowing': return '0 0 0 3px rgba(245,158,11,0.3), 0 0 12px rgba(245,158,11,0.2)';
+    case 'found': return '0 0 0 3px rgba(34,197,94,0.4), 0 0 12px rgba(34,197,94,0.2)';
+    case 'inserting': return '0 0 0 3px rgba(16,185,129,0.3), 0 0 12px rgba(16,185,129,0.2)';
+    default: return '0 1px 3px rgba(0,0,0,0.08)';
   }
 }
 
 export default function BTreeCanvas({ frame }: BTreeCanvasProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const prevPositions = useRef<Record<string, { x: number; y: number }>>({});
 
   const { laidOut, bounds, highlights } = useMemo(() => {
     if (!frame) return { laidOut: [] as LaidOutNode[], bounds: { w: 0, h: 0 }, highlights: {} as Record<string, HighlightType> };
@@ -111,6 +126,12 @@ export default function BTreeCanvas({ frame }: BTreeCanvasProps) {
     return { laidOut: laid, bounds: { w: maxX + 40, h: maxY + 40 }, highlights: hl };
   }, [frame]);
 
+  useEffect(() => {
+    const posMap: Record<string, { x: number; y: number }> = {};
+    laidOut.forEach((n) => { posMap[n.id] = { x: n.x, y: n.y }; });
+    prevPositions.current = posMap;
+  }, [laidOut]);
+
   if (!frame) {
     return (
       <div className="flex items-center justify-center h-full text-slate-400">
@@ -119,18 +140,39 @@ export default function BTreeCanvas({ frame }: BTreeCanvasProps) {
     );
   }
 
+  const svgW = Math.max(800, bounds.w);
+  const svgH = Math.max(400, bounds.h);
+  const nodeMap: Record<string, LaidOutNode> = {};
+  laidOut.forEach((n) => { nodeMap[n.id] = n; });
+
   const selectedNode = selectedId ? frame.nodes[selectedId] : null;
 
   return (
     <div className="relative h-full overflow-auto bg-slate-50">
-      <svg
-        width={Math.max(800, bounds.w)}
-        height={Math.max(400, bounds.h)}
-        className="block"
-      >
+      <svg width={svgW} height={svgH} className="block">
+        <defs>
+          <marker id="arrow-sky" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill="#0ea5e9" />
+          </marker>
+          <filter id="glow-red">
+            <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+            <feMerge>
+              <feMergeNode in="coloredBlur"/>
+              <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+          </filter>
+          <filter id="glow-green">
+            <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+            <feMerge>
+              <feMergeNode in="coloredBlur"/>
+              <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+          </filter>
+        </defs>
+
         {frame.leafChain?.map((link, i) => {
-          const from = laidOut.find((n) => n.id === link.from);
-          const to = laidOut.find((n) => n.id === link.to);
+          const from = nodeMap[link.from];
+          const to = nodeMap[link.to];
           if (!from || !to) return null;
           const y1 = from.y + 30;
           const y2 = to.y + 30;
@@ -151,63 +193,129 @@ export default function BTreeCanvas({ frame }: BTreeCanvasProps) {
 
         {laidOut.map((node) =>
           node.children.map((childId, i) => {
-            const child = laidOut.find((n) => n.id === childId);
+            const child = nodeMap[childId];
             if (!child) return null;
+            const isOnPath = highlights[node.id] === 'searching' && highlights[childId] === 'searching';
             return (
-              <line
-                key={`${node.id}-${i}`}
-                x1={node.x + (node.width / (node.children.length + 1)) * (i + 1)}
-                y1={node.y + 48}
-                x2={child.x + child.width / 2}
-                y2={child.y}
-                stroke="#94a3b8"
-                strokeWidth={1.5}
+              <motion.line
+                key={`edge-${node.id}-${i}`}
+                initial={{ opacity: 0.3 }}
+                animate={{
+                  x1: node.x + (node.width / (node.children.length + 1)) * (i + 1),
+                  y1: node.y + 48,
+                  x2: child.x + child.width / 2,
+                  y2: child.y,
+                  opacity: 1,
+                  stroke: isOnPath ? '#3b82f6' : '#94a3b8',
+                  strokeWidth: isOnPath ? 2.5 : 1.5,
+                }}
+                transition={{ duration: 0.5, ease: 'easeInOut' }}
               />
             );
           })
         )}
 
-        <defs>
-          <marker id="arrow-sky" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
-            <path d="M0,0 L10,5 L0,10 z" fill="#0ea5e9" />
-          </marker>
-        </defs>
+        {frame.insertingKey != null && frame.type === 'splitting' && frame.nodeId && (() => {
+          const n = nodeMap[frame.nodeId];
+          if (!n) return null;
+          return (
+            <motion.rect
+              x={n.x - 4}
+              y={n.y - 4}
+              width={n.width + 8}
+              height={52}
+              rx={10}
+              fill="none"
+              stroke="#ef4444"
+              strokeWidth={3}
+              filter="url(#glow-red)"
+              initial={{ opacity: 0.5 }}
+              animate={{ opacity: [0.5, 1, 0.5, 1, 0.5, 1] }}
+              transition={{ duration: 1.2, repeat: Infinity }}
+            />
+          );
+        })()}
       </svg>
 
-      <div className="absolute inset-0 pointer-events-none">
-        <AnimatePresence>
+      <div className="absolute inset-0 pointer-events-none" style={{ width: svgW, height: svgH }}>
+        <AnimatePresence mode="popLayout">
           {laidOut.map((node) => {
             const hl = highlights[node.id];
             const isSelected = selectedId === node.id;
+            const isSplitting = hl === 'splitting';
+            const isFound = hl === 'found';
+            const isInserting = hl === 'inserting';
+            const isSearching = hl === 'searching';
+            const isBorrowing = hl === 'borrowing';
+            const isMerging = hl === 'merging';
+
             return (
               <motion.div
                 key={node.id}
-                initial={{ opacity: 0, scale: 0.8 }}
-                animate={{ opacity: 1, scale: 1, x: node.x + 20, y: node.y }}
-                exit={{ opacity: 0, scale: 0.8 }}
-                transition={{ duration: 0.35 }}
+                layout
+                layoutId={node.id}
+                initial={{ opacity: 0, scale: 0.6, y: -20 }}
+                animate={{
+                  opacity: 1,
+                  scale: isSplitting ? [1, 1.08, 1, 1.08, 1] : 1,
+                  x: node.x + 20,
+                  y: node.y,
+                  boxShadow: highlightShadow(hl),
+                  borderColor: isSplitting ? '#ef4444' : isFound ? '#22c55e' : isInserting ? '#10b981' : isSearching ? '#3b82f6' : isBorrowing ? '#f59e0b' : isMerging ? '#f97316' : '#cbd5e1',
+                  backgroundColor: isSplitting ? '#fef2f2' : isFound ? '#f0fdf4' : isInserting ? '#ecfdf5' : isSearching ? '#eff6ff' : isBorrowing ? '#fffbeb' : isMerging ? '#fff7ed' : '#ffffff',
+                }}
+                exit={{ opacity: 0, scale: 0.5, transition: { duration: 0.3 } }}
+                transition={{
+                  layout: { duration: 0.5, ease: 'easeInOut' },
+                  scale: { duration: isSplitting ? 0.8 : 0.3, repeat: isSplitting ? Infinity : 0 },
+                  boxShadow: { duration: 0.3 },
+                  borderColor: { duration: 0.3 },
+                  backgroundColor: { duration: 0.3 },
+                  x: { duration: 0.5, ease: 'easeInOut' },
+                  y: { duration: 0.5, ease: 'easeInOut' },
+                  opacity: { duration: 0.3 },
+                }}
                 className={cn(
                   'absolute border-2 rounded-lg flex items-center gap-1 px-3 py-2 pointer-events-auto cursor-pointer',
-                  'transition-shadow',
-                  highlightColor(hl),
                   isSelected && 'ring-2 ring-primary-500'
                 )}
                 style={{ width: node.width }}
                 onClick={() => setSelectedId(isSelected ? null : node.id)}
               >
-                {node.keys.map((k, i) => (
-                  <motion.div
-                    key={`${node.id}-${k}-${i}`}
-                    initial={{ scale: 0 }}
-                    animate={{ scale: 1 }}
-                    className={cn(
-                      'w-9 h-9 flex items-center justify-center rounded font-mono text-sm font-semibold',
-                      hl === 'found' ? 'bg-green-500 text-white' : 'bg-slate-100 text-slate-800'
-                    )}
-                  >
-                    {k}
-                  </motion.div>
-                ))}
+                {node.keys.map((k, i) => {
+                  const isKeyHighlight =
+                    (isFound && frame.insertingKey != null && k === frame.insertingKey) ||
+                    (isInserting && frame.insertingKey != null && k === frame.insertingKey);
+                  return (
+                    <motion.div
+                      key={`${node.id}-key-${i}`}
+                      layout
+                      initial={{ scale: 0, opacity: 0 }}
+                      animate={{
+                        scale: isKeyHighlight ? [1, 1.3, 1] : 1,
+                        opacity: 1,
+                      }}
+                      transition={{
+                        scale: { duration: 0.4, repeat: isKeyHighlight ? 2 : 0 },
+                        layout: { duration: 0.4, ease: 'easeInOut' },
+                      }}
+                      className={cn(
+                        'w-9 h-9 flex items-center justify-center rounded font-mono text-sm font-semibold',
+                        isKeyHighlight
+                          ? 'bg-emerald-500 text-white'
+                          : isSplitting
+                            ? 'bg-red-100 text-red-800'
+                            : isFound
+                              ? 'bg-green-500 text-white'
+                              : isSearching
+                                ? 'bg-blue-100 text-blue-800'
+                                : 'bg-slate-100 text-slate-800'
+                      )}
+                    >
+                      {k}
+                    </motion.div>
+                  );
+                })}
                 {node.keys.length === 0 && (
                   <div className="w-full text-center text-xs text-slate-400">空</div>
                 )}
@@ -215,10 +323,65 @@ export default function BTreeCanvas({ frame }: BTreeCanvasProps) {
             );
           })}
         </AnimatePresence>
+
+        {frame.type === 'splitting' && frame.nodeId && frame.insertingKey != null && (() => {
+          const n = nodeMap[frame.nodeId];
+          if (!n) return null;
+          return (
+            <motion.div
+              key={`upkey-${frame.insertingKey}`}
+              initial={{ opacity: 0, y: n.y + 20, scale: 1.5 }}
+              animate={{ opacity: [0, 1, 1, 0.8], y: n.y - 30, scale: [1.5, 1.3, 1.1, 1] }}
+              transition={{ duration: 1.2, ease: 'easeOut' }}
+              className="absolute flex items-center justify-center w-10 h-10 rounded-full bg-red-500 text-white font-mono font-bold text-sm pointer-events-none"
+              style={{ left: n.x + n.width / 2 - 20 }}
+            >
+              {frame.insertingKey}
+            </motion.div>
+          );
+        })()}
+
+        {frame.type === 'borrowing' && frame.nodeId && (() => {
+          const n = nodeMap[frame.nodeId];
+          if (!n) return null;
+          return (
+            <motion.div
+              key={`borrow-arrow-${frame.nodeId}`}
+              initial={{ opacity: 0, x: n.x + n.width + 10 }}
+              animate={{ opacity: [0, 1, 1, 0], x: [n.x + n.width + 10, n.x + n.width + 2] }}
+              transition={{ duration: 0.8, ease: 'easeInOut' }}
+              className="absolute text-2xl pointer-events-none"
+              style={{ top: n.y + 12 }}
+            >
+              ←
+            </motion.div>
+          );
+        })()}
+
+        {frame.type === 'merging' && frame.nodeId && (() => {
+          const n = nodeMap[frame.nodeId];
+          if (!n) return null;
+          return (
+            <motion.div
+              key={`merge-glow-${frame.nodeId}`}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: [0, 0.6, 0] }}
+              transition={{ duration: 1, repeat: Infinity }}
+              className="absolute rounded-lg pointer-events-none"
+              style={{
+                left: n.x + 16,
+                top: n.y - 4,
+                width: n.width + 8,
+                height: 52,
+                background: 'radial-gradient(ellipse, rgba(249,115,22,0.3), transparent)',
+              }}
+            />
+          );
+        })()}
       </div>
 
       {selectedNode && (
-        <div className="absolute right-4 top-4 card p-4 text-sm pointer-events-auto max-w-xs">
+        <div className="absolute right-4 top-4 card p-4 text-sm pointer-events-auto max-w-xs z-10">
           <div className="flex items-center justify-between mb-2">
             <h4 className="font-semibold">节点详情</h4>
             <button onClick={() => setSelectedId(null)} className="text-slate-400 hover:text-slate-600">✕</button>

@@ -65,7 +65,7 @@ export class BTree {
       left.children = node.children.slice(0, mid + 1);
       right.children = node.children.slice(mid + 1);
     }
-    frames.push(this.mkFrame('分裂完成', upKey, null, null));
+    frames.push(this.mkFrameSplit('节点闪烁变红，即将分裂', upKey, node.id, 'splitting', left.id, right.id));
     const parentIdx = path.indexOf(node) - 1;
     if (parentIdx >= 0) {
       const parent = path[parentIdx];
@@ -75,7 +75,7 @@ export class BTree {
       }
       parent.children.splice(insertIdx, 1, left);
       parent.children.splice(insertIdx + 1, 0, right);
-      frames.push(this.mkFrame('中间 key ' + upKey + ' 上推到父节点', upKey, parent.id, 'inserting'));
+      frames.push(this.mkFrameSplit('中间 key ' + upKey + ' 向上弹出到父节点，左右子节点分离滑开', upKey, parent.id, 'inserting', left.id, right.id));
       if (parent.keys.length > this.maxKeys) {
         this._splitUpward(parent, path, frames);
       }
@@ -86,7 +86,7 @@ export class BTree {
       }
       newRoot.children = [left, right];
       this.root = newRoot;
-      frames.push(this.mkFrame('创建新根节点', upKey, newRoot.id, 'inserting'));
+      frames.push(this.mkFrameSplit('创建新根节点，左右子节点归位', upKey, newRoot.id, 'inserting', left.id, right.id));
     }
   }
 
@@ -276,6 +276,16 @@ export class BTree {
   makeFrame(description: string, extra: any = {}): AnimationFrame {
     const s = this.serialize();
     const data: any = { ...s, order: this.order, isPlus: this.isPlus, ...extra };
+    return { id: Math.random().toString(36).slice(2), data, description };
+  }
+
+  private mkFrameSplit(description: string, insertingKey: number | null, nodeId: string | null, type: string | null, leftId: string, rightId: string): AnimationFrame {
+    const s = this.serialize();
+    const data: any = { ...s, order: this.order, isPlus: this.isPlus };
+    if (nodeId) data.nodeId = nodeId;
+    if (type) data.type = type;
+    if (insertingKey !== null) data.insertingKey = insertingKey;
+    data.splitInfo = { leftId, rightId, upKey: insertingKey };
     return { id: Math.random().toString(36).slice(2), data, description };
   }
 }
