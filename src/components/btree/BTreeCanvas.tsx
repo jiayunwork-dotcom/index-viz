@@ -25,6 +25,7 @@ interface LaidOutNode extends BTreeNodeData {
   y: number;
   width: number;
   centerX: number;
+  subtreeWidth: number;
 }
 
 const K_W = 40;
@@ -32,8 +33,9 @@ const K_H = 34;
 const K_GAP = 4;
 const PAD_X = 10;
 const PAD_Y = 8;
-const LV_GAP = 100;
-const ND_GAP = 40;
+const LV_GAP = 110;
+const ND_GAP = 60;
+const SIBLING_GAP = 50;
 
 function nodeW(nKeys: number): number {
   const c = Math.max(nKeys, 1);
@@ -52,15 +54,18 @@ function layoutTree(
     if (!nd) return { width: 0, centerX: 0 };
 
     const selfW = nodeW(nd.keys.length);
+    const y = depth * (K_H + PAD_Y * 2 + LV_GAP) + 30;
 
     if (nd.children.length === 0) {
-      result.push({
+      const nodeObj: LaidOutNode = {
         ...nd,
         x: startX,
-        y: depth * (K_H + PAD_Y * 2 + LV_GAP) + 30,
+        y,
         width: selfW,
         centerX: startX + selfW / 2,
-      });
+        subtreeWidth: selfW,
+      };
+      result.push(nodeObj);
       return { width: selfW, centerX: startX + selfW / 2 };
     }
 
@@ -68,9 +73,9 @@ function layoutTree(
     const childCenters: number[] = [];
 
     nd.children.forEach((cid, i) => {
-      const childX = startX + childTotalW + (i > 0 ? ND_GAP : 0);
-      if (i > 0) childTotalW += ND_GAP;
-      const cr = layout(cid, depth + 1, childX);
+      const childStartX = startX + childTotalW + (i > 0 ? SIBLING_GAP : 0);
+      if (i > 0) childTotalW += SIBLING_GAP;
+      const cr = layout(cid, depth + 1, childStartX);
       childCenters.push(cr.centerX);
       childTotalW += cr.width;
     });
@@ -78,24 +83,26 @@ function layoutTree(
     const firstC = childCenters[0];
     const lastC = childCenters[childCenters.length - 1];
     const childrenCx = (firstC + lastC) / 2;
-    const totalW = Math.max(selfW, childTotalW);
+    const subtreeW = Math.max(selfW, childTotalW);
 
-    const shift = (totalW - childTotalW) / 2;
+    const shift = (subtreeW - childTotalW) / 2;
     if (shift > 0) {
       nd.children.forEach((cid) => shiftSubtree(cid, shift, depth + 1, result));
     }
 
     const selfCx = childrenCx + shift;
 
-    result.push({
+    const nodeObj: LaidOutNode = {
       ...nd,
       x: selfCx - selfW / 2,
-      y: depth * (K_H + PAD_Y * 2 + LV_GAP) + 30,
+      y,
       width: selfW,
       centerX: selfCx,
-    });
+      subtreeWidth: subtreeW,
+    };
+    result.push(nodeObj);
 
-    return { width: totalW, centerX: selfCx };
+    return { width: subtreeW, centerX: selfCx };
   };
 
   const shiftSubtree = (id: string, delta: number, depth: number, list: LaidOutNode[]) => {
@@ -106,7 +113,14 @@ function layoutTree(
     nd.children.forEach((cid) => shiftSubtree(cid, delta, depth + 1, list));
   };
 
-  layout(rootId, 0, 40);
+  layout(rootId, 0, 50);
+
+  let minX = Infinity;
+  result.forEach((n) => { minX = Math.min(minX, n.x); });
+  if (minX < 20) {
+    const off = 20 - minX;
+    result.forEach((n) => { n.x += off; n.centerX += off; });
+  }
 
   return result;
 }
@@ -126,20 +140,32 @@ function colorsOf(hl: HighlightType | undefined) {
 export default function BTreeCanvas({ frame }: BTreeCanvasProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const nodeH = K_H + PAD_Y * 2;
+  const prevNodesRef = useRef<Set<string>>(new Set());
 
-  const { laidOut, bounds, highlights } = useMemo(() => {
-    if (!frame) return { laidOut: [] as LaidOutNode[], bounds: { w: 0, h: 0 }, highlights: {} as Record<string, HighlightType> };
+  const { laidOut, bounds, highlights, nodeMap } = useMemo(() => {
+    if (!frame) return {
+      laidOut: [] as LaidOutNode[],
+      bounds: { w: 0, h: 0 },
+      highlights: {} as Record<string, HighlightType>,
+      nodeMap: {} as Record<string, LaidOutNode>,
+    };
     const laid = layoutTree(frame.nodes, frame.rootId);
     let maxX = 0, maxY = 0;
     laid.forEach((n) => {
-      maxX = Math.max(maxX, n.x + n.width);
-      maxY = Math.max(maxY, n.y + nodeH);
+      maxX = Math.max(maxX, n.x + n.width + 40);
+      maxY = Math.max(maxY, n.y + nodeH + 40);
     });
     const hl: Record<string, HighlightType> = {};
     if (frame.type && frame.nodeId) hl[frame.nodeId] = frame.type;
     if (frame.path) frame.path.forEach((p) => { if (!hl[p]) hl[p] = 'searching'; });
-    return { laidOut: laid, bounds: { w: maxX + 40, h: maxY + 60 }, highlights: hl };
+    const nm: Record<string, LaidOutNode> = {};
+    laid.forEach((n) => { nm[n.id] = n; });
+    return { laidOut: laid, bounds: { w: maxX, h: maxY }, highlights: hl, nodeMap: nm };
   }, [frame, nodeH]);
+
+  useEffect(() => {
+    prevNodesRef.current = new Set(laidOut.map((n) => n.id));
+  }, [laidOut]);
 
   if (!frame) {
     return (
@@ -151,29 +177,32 @@ export default function BTreeCanvas({ frame }: BTreeCanvasProps) {
 
   const svgW = Math.max(800, bounds.w);
   const svgH = Math.max(400, bounds.h);
-  const nodeMap: Record<string, LaidOutNode> = {};
-  laidOut.forEach((n) => { nodeMap[n.id] = n; });
 
   const splitNode = frame.type === 'splitting' && frame.nodeId ? nodeMap[frame.nodeId] : null;
-  const selectedNode = selectedId ? frame.nodes[selectedId] : null;
 
-  const showUpKey = (frame.type === 'splitting' && splitNode != null) || (frame.splitInfo != null && frame.insertingKey != null);
+  const hasSplitInfo = frame.splitInfo != null && frame.insertingKey != null;
+  const showUpKey = (frame.type === 'splitting' && splitNode != null) || hasSplitInfo;
 
-  const upKeyStartY = splitNode ? splitNode.y + nodeH / 2 : 
-    (frame.splitInfo ? (() => {
-      const left = nodeMap[frame.splitInfo.leftId];
-      const right = nodeMap[frame.splitInfo.rightId];
-      if (left && right) return (left.y + right.y) / 2;
-      return 100;
-    })() : 100);
+  let upKeyStartY = 100;
+  let upKeyX = 100;
+  let upKeyEndY = 40;
+  let upKeyEndX = 100;
 
-  const upKeyX = splitNode ? splitNode.centerX :
-    (frame.splitInfo ? (() => {
-      const left = nodeMap[frame.splitInfo.leftId];
-      const right = nodeMap[frame.splitInfo.rightId];
-      if (left && right) return (left.centerX + right.centerX) / 2;
-      return 100;
-    })() : 100);
+  if (splitNode) {
+    upKeyStartY = splitNode.y + nodeH / 2;
+    upKeyX = splitNode.centerX;
+    upKeyEndY = splitNode.y - 32;
+    upKeyEndX = splitNode.centerX;
+  } else if (hasSplitInfo) {
+    const left = nodeMap[frame.splitInfo!.leftId];
+    const right = nodeMap[frame.splitInfo!.rightId];
+    if (left && right) {
+      upKeyStartY = (left.y + right.y) / 2;
+      upKeyX = (left.centerX + right.centerX) / 2;
+      upKeyEndY = Math.min(left.y, right.y) - LV_GAP / 2;
+      upKeyEndX = upKeyX;
+    }
+  }
 
   return (
     <div className="relative h-full overflow-auto bg-gradient-to-b from-slate-50 to-white">
@@ -189,14 +218,20 @@ export default function BTreeCanvas({ frame }: BTreeCanvasProps) {
             <path d="M0,0 L9,4.5 L0,9 z" fill="#0ea5e9" />
           </marker>
           <filter id="bt-glow-red" x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur stdDeviation="6" result="blur" />
-            <feFlood floodColor="#ef4444" floodOpacity="0.8" result="red" />
-            <feComposite in="red" in2="blur" operator="in" result="red-glow" />
-            <feMerge><feMergeNode in="red-glow" /><feMergeNode in="SourceGraphic" /></feMerge>
+            <feGaussianBlur stdDeviation="5" result="b" />
+            <feFlood floodColor="#ef4444" floodOpacity="0.9" result="red" />
+            <feComposite in="red" in2="b" operator="in" result="redglow" />
+            <feMerge>
+              <feMergeNode in="redglow" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
           </filter>
           <filter id="bt-glow-green" x="-50%" y="-50%" width="200%" height="200%">
             <feGaussianBlur stdDeviation="3" result="b" />
-            <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
+            <feMerge>
+              <feMergeNode in="b" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
           </filter>
         </defs>
 
@@ -210,19 +245,14 @@ export default function BTreeCanvas({ frame }: BTreeCanvasProps) {
               return (
                 <motion.line
                   key={`edge-${node.id}-${childId}`}
-                  initial={{ opacity: 0 }}
-                  animate={{
-                    x1: exitX,
-                    y1: node.y + nodeH,
-                    x2: child.centerX,
-                    y2: child.y,
-                    stroke: onPath ? '#3b82f6' : '#94a3b8',
-                    strokeWidth: onPath ? 2.5 : 1.5,
-                    opacity: 1,
-                  }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.4, ease: 'easeInOut' }}
+                  x1={exitX}
+                  y1={node.y + nodeH}
+                  x2={child.centerX}
+                  y2={child.y}
+                  stroke={onPath ? '#3b82f6' : '#94a3b8'}
+                  strokeWidth={onPath ? 2.5 : 1.5}
                   markerEnd={onPath ? 'url(#bt-edge-blue)' : 'url(#bt-edge)'}
+                  transition={{ duration: 0.45, ease: 'easeInOut' }}
                 />
               );
             })
@@ -238,60 +268,56 @@ export default function BTreeCanvas({ frame }: BTreeCanvasProps) {
             return (
               <motion.line
                 key={`chain-${i}`}
-                initial={{ opacity: 0 }}
-                animate={{
-                  x1: from.x + from.width,
-                  y1: midY,
-                  x2: to.x - 2,
-                  y2: midY,
-                  opacity: 1,
-                }}
-                transition={{ duration: 0.4 }}
+                x1={from.x + from.width}
+                y1={midY}
+                x2={to.x - 2}
+                y2={midY}
                 stroke="#0ea5e9"
                 strokeWidth={2}
                 strokeDasharray="5 3"
                 markerEnd="url(#bt-chain)"
+                transition={{ duration: 0.45 }}
               />
             );
           })}
         </g>
 
-        <AnimatePresence mode="popLayout">
+        <g>
           {laidOut.map((node) => {
             const hl = highlights[node.id];
             const cs = colorsOf(hl);
             const isSelected = selectedId === node.id;
             const isSplitting = hl === 'splitting';
             const isFound = hl === 'found';
+            const isInserting = hl === 'inserting';
 
             return (
               <g key={node.id}>
                 <motion.rect
-                  layoutId={`nd-${node.id}`}
-                  initial={{ opacity: 0, scale: 0.7 }}
+                  x={node.x}
+                  y={node.y}
+                  width={node.width}
+                  height={nodeH}
+                  rx={8}
+                  fill={cs.fill}
+                  stroke={cs.stroke}
+                  strokeWidth={isSplitting || isFound ? 3.5 : 2}
+                  filter={isSplitting ? 'url(#bt-glow-red)' : isFound ? 'url(#bt-glow-green)' : 'none'}
+                  style={{ cursor: 'pointer', transformOrigin: `${node.centerX}px ${node.y + nodeH / 2}px` }}
                   animate={{
-                    x: node.x,
-                    y: node.y,
-                    width: node.width,
-                    height: nodeH,
-                    rx: 8,
-                    fill: cs.fill,
-                    stroke: cs.stroke,
-                    strokeWidth: isSplitting || isFound ? 3.5 : 2,
-                    filter: isSplitting ? 'url(#bt-glow-red)' : isFound ? 'url(#bt-glow-green)' : 'none',
-                    scale: isSplitting ? [1, 1.08, 1, 1.08, 1] : 1,
-                    opacity: 1,
+                    scale: isSplitting ? [1, 1.1, 1, 1.1, 1] : 1,
                   }}
-                  exit={{ opacity: 0, scale: 0.6 }}
                   transition={{
-                    layout: { duration: 0.5, ease: 'easeInOut' },
-                    scale: { duration: isSplitting ? 0.7 : 0.3, repeat: isSplitting ? Infinity : 0, repeatType: 'loop' },
+                    x: { duration: 0.45, ease: 'easeInOut' },
+                    y: { duration: 0.45, ease: 'easeInOut' },
+                    width: { duration: 0.45, ease: 'easeInOut' },
+                    height: { duration: 0.45, ease: 'easeInOut' },
                     fill: { duration: 0.3 },
                     stroke: { duration: 0.3 },
+                    strokeWidth: { duration: 0.25 },
                     filter: { duration: 0.25 },
-                    opacity: { duration: 0.25 },
+                    scale: { duration: isSplitting ? 0.7 : 0.3, repeat: isSplitting ? Infinity : 0, repeatType: 'loop' },
                   }}
-                  style={{ cursor: 'pointer', transformOrigin: `${node.centerX}px ${node.y + nodeH / 2}px` }}
                   onClick={() => setSelectedId(isSelected ? null : node.id)}
                 />
 
@@ -308,6 +334,7 @@ export default function BTreeCanvas({ frame }: BTreeCanvasProps) {
                     stroke="#6366f1"
                     strokeWidth={2}
                     strokeDasharray="5 3"
+                    transition={{ x: 0.45, y: 0.45, width: 0.45, height: 0.45 }}
                   />
                 )}
 
@@ -316,43 +343,38 @@ export default function BTreeCanvas({ frame }: BTreeCanvasProps) {
                   const ky = node.y + PAD_Y;
                   const isKHi =
                     (hl === 'found' && frame.insertingKey != null && k === frame.insertingKey) ||
-                    (hl === 'inserting' && frame.insertingKey != null && k === frame.insertingKey);
+                    (hl === 'inserting' && frame.insertingKey != null && k === frame.insertingKey) ||
+                    (isSplitting && frame.insertingKey != null && k === frame.insertingKey);
 
                   return (
                     <g key={`k-${node.id}-${ki}`}>
                       <motion.rect
-                        layoutId={`kr-${node.id}-${ki}`}
-                        initial={{ scale: 0, opacity: 0 }}
+                        x={kx}
+                        y={ky}
+                        width={K_W}
+                        height={K_H}
+                        rx={6}
+                        fill={isKHi ? '#ef4444' : cs.key}
                         animate={{
-                          x: kx,
-                          y: ky,
-                          width: K_W,
-                          height: K_H,
-                          rx: 6,
-                          fill: isKHi ? '#22c55e' : cs.key,
-                          scale: isKHi ? [1, 1.2, 1] : 1,
-                          opacity: 1,
+                          scale: isKHi ? [1, 1.25, 1, 1.25, 1] : 1,
                         }}
                         transition={{
-                          layout: { duration: 0.4, ease: 'easeInOut' },
-                          scale: { duration: 0.45, repeat: isKHi ? 2 : 0 },
+                          x: { duration: 0.45, ease: 'easeInOut' },
+                          y: { duration: 0.45, ease: 'easeInOut' },
                           fill: { duration: 0.3 },
+                          scale: { duration: isKHi ? 0.6 : 0.3, repeat: isKHi ? 2 : 0 },
                         }}
+                        style={{ transformOrigin: `${kx + K_W / 2}px ${ky + K_H / 2}px` }}
                       />
                       <motion.text
-                        layoutId={`kt-${node.id}-${ki}`}
-                        initial={{ opacity: 0, y: 4 }}
-                        animate={{
-                          x: kx + K_W / 2,
-                          y: ky + K_H / 2 + 5,
-                          opacity: 1,
-                          fill: isKHi ? '#ffffff' : cs.keyText,
-                        }}
-                        transition={{ layout: { duration: 0.4 }, fill: { duration: 0.3 } }}
+                        x={kx + K_W / 2}
+                        y={ky + K_H / 2 + 5}
                         textAnchor="middle"
                         fontSize="14"
                         fontWeight="600"
                         fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
+                        fill={isKHi ? '#ffffff' : cs.keyText}
+                        transition={{ x: 0.45, y: 0.45, fill: 0.3 }}
                       >
                         {k}
                       </motion.text>
@@ -374,50 +396,49 @@ export default function BTreeCanvas({ frame }: BTreeCanvasProps) {
               </g>
             );
           })}
-        </AnimatePresence>
+        </g>
 
         {showUpKey && (
-          <g>
+          <g key={`upkey-${frame.insertingKey}-${frame.nodeId || 'split'}`}>
             <motion.circle
-              key="upkey-circle"
-              initial={{ r: 0, opacity: 0, cy: upKeyStartY }}
-              animate={{
-                cx: upKeyX,
-                cy: splitNode ? splitNode.y - 28 : upKeyStartY - 60,
-                r: 17,
-                opacity: [0, 1, 1, 0.9],
-              }}
-              transition={{ duration: 1, ease: 'easeOut' }}
+              cx={upKeyX}
+              cy={upKeyStartY}
+              r={18}
               fill="#ef4444"
-              style={{ transformOrigin: `${upKeyX}px ${splitNode ? splitNode.y - 28 : upKeyStartY - 60}px` }}
+              style={{ transformOrigin: `${upKeyEndX}px ${upKeyEndY}px` }}
+              animate={{
+                cx: upKeyEndX,
+                cy: upKeyEndY,
+                opacity: [0, 1, 1, 0.95],
+              }}
+              transition={{ duration: 0.9, ease: 'easeOut' }}
             />
             <motion.text
-              key="upkey-text"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{
-                x: upKeyX,
-                y: splitNode ? splitNode.y - 23 : upKeyStartY - 55,
-                opacity: [0, 1, 1, 0.9],
-              }}
-              transition={{ duration: 1, ease: 'easeOut' }}
+              x={upKeyX}
+              y={upKeyStartY + 5}
               textAnchor="middle"
               fontSize="14"
               fontWeight="700"
               fill="white"
               fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
+              animate={{
+                x: upKeyEndX,
+                y: upKeyEndY + 5,
+                opacity: [0, 1, 1, 0.95],
+              }}
+              transition={{ duration: 0.9, ease: 'easeOut' }}
             >
               {frame.insertingKey}
             </motion.text>
             <motion.path
-              key="upkey-path"
-              initial={{ pathLength: 0, opacity: 0 }}
-              animate={{ pathLength: 1, opacity: 0.5 }}
-              transition={{ duration: 0.8, delay: 0.1 }}
-              d={`M ${upKeyX} ${upKeyStartY + 2} Q ${upKeyX + 25} ${upKeyStartY - 15}, ${upKeyX} ${upKeyStartY - 55}`}
+              d={`M ${upKeyX} ${upKeyStartY} Q ${upKeyX + 30} ${(upKeyStartY + upKeyEndY) / 2 - 20}, ${upKeyEndX} ${upKeyEndY + 18}`}
               stroke="#ef4444"
-              strokeWidth={2}
-              strokeDasharray="4 2"
+              strokeWidth={2.5}
+              strokeDasharray="5 3"
               fill="none"
+              initial={{ pathLength: 0, opacity: 0 }}
+              animate={{ pathLength: 1, opacity: 0.6 }}
+              transition={{ duration: 0.7, delay: 0.05 }}
             />
           </g>
         )}
@@ -434,7 +455,6 @@ export default function BTreeCanvas({ frame }: BTreeCanvasProps) {
               y={n.y + nodeH / 2 + 6}
               fontSize="18"
               fill="#f59e0b"
-              fontWeight="bold"
             >
               ←
             </motion.text>
@@ -442,42 +462,15 @@ export default function BTreeCanvas({ frame }: BTreeCanvasProps) {
         })()}
       </svg>
 
-      {selectedNode && (
-        <div className="absolute right-4 top-4 card p-4 text-sm pointer-events-auto max-w-xs z-10 shadow-xl border border-slate-200">
-          <div className="flex items-center justify-between mb-2">
-            <h4 className="font-semibold text-slate-800">节点详情</h4>
-            <button onClick={() => setSelectedId(null)} className="text-slate-400 hover:text-slate-600 text-base">✕</button>
-          </div>
-          <div className="space-y-1.5 text-slate-600">
-            <div className="flex justify-between">
-              <span>ID</span>
-              <span className="font-mono text-slate-800 text-xs">{selectedNode.id}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>层级</span>
-              <span className="text-slate-800">L{selectedNode.level}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>类型</span>
-              <span className="text-slate-800">{selectedNode.isLeaf ? '叶子节点' : '内部节点'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>Key 数量</span>
-              <span className="text-slate-800 font-mono">{selectedNode.keys.length} / {frame.order - 1}</span>
-            </div>
-            <div>
-              <span>Keys</span>
-              <div className="mt-1 flex flex-wrap gap-1">
-                {selectedNode.keys.map((k) => (
-                  <span key={k} className="px-1.5 py-0.5 bg-slate-100 rounded font-mono text-xs">{k}</span>
-                ))}
-                {selectedNode.keys.length === 0 && <span className="text-slate-400 text-xs">无</span>}
-              </div>
-            </div>
-            <div className="flex justify-between">
-              <span>子节点数</span>
-              <span className="text-slate-800 font-mono">{selectedNode.children.length}</span>
-            </div>
+      {selectedId && frame.nodes[selectedId] && (
+        <div className="absolute top-2 right-2 bg-white shadow-lg rounded-lg p-3 border border-slate-200 text-xs">
+          <div className="font-semibold text-slate-700 mb-1">节点信息</div>
+          <div className="text-slate-500 space-y-0.5">
+            <div>ID: {frame.nodes[selectedId].id}</div>
+            <div>层: {frame.nodes[selectedId].level}</div>
+            <div>Keys: {frame.nodes[selectedId].keys.join(', ') || '空'}</div>
+            <div>子节点: {frame.nodes[selectedId].children.length}</div>
+            <div>类型: {frame.nodes[selectedId].isLeaf ? '叶子' : '内部'}</div>
           </div>
         </div>
       )}
