@@ -49,9 +49,11 @@ export class BTree {
   }
 
   private _splitUpward(node: BTreeNode, path: BTreeNode[], frames: AnimationFrame[]): void {
-    frames.push(this.mkFrame('节点溢出，准备分裂', null, node.id, 'splitting'));
     const mid = Math.floor(node.keys.length / 2);
     const upKey = node.keys[mid];
+
+    frames.push(this.mkFrame('节点溢出，准备分裂 - 第一次闪烁', upKey, node.id, 'splitting'));
+
     const left = new BTreeNode(node.isLeaf);
     const right = new BTreeNode(node.isLeaf);
     if (this.isPlus) {
@@ -65,7 +67,9 @@ export class BTree {
       left.children = node.children.slice(0, mid + 1);
       right.children = node.children.slice(mid + 1);
     }
-    frames.push(this.mkFrameSplit('节点闪烁变红，即将分裂', upKey, node.id, 'splitting', left.id, right.id));
+
+    frames.push(this.mkFrame('节点闪烁变红 - 中间 key 高亮', upKey, node.id, 'splitting'));
+
     const parentIdx = path.indexOf(node) - 1;
     if (parentIdx >= 0) {
       const parent = path[parentIdx];
@@ -75,7 +79,8 @@ export class BTree {
       }
       parent.children.splice(insertIdx, 1, left);
       parent.children.splice(insertIdx + 1, 0, right);
-      frames.push(this.mkFrameSplit('中间 key ' + upKey + ' 向上弹出到父节点，左右子节点分离滑开', upKey, parent.id, 'inserting', left.id, right.id));
+      frames.push(this.mkFrameSplit('中间 key ' + upKey + ' 向上弹出到父节点，左右子节点分离滑开', upKey, node.id, 'inserting', left.id, right.id));
+      frames.push(this.mkFrameSplit('分裂完成，新节点归位', upKey, parent.id, 'inserting', left.id, right.id));
       if (parent.keys.length > this.maxKeys) {
         this._splitUpward(parent, path, frames);
       }
@@ -86,7 +91,8 @@ export class BTree {
       }
       newRoot.children = [left, right];
       this.root = newRoot;
-      frames.push(this.mkFrameSplit('创建新根节点，左右子节点归位', upKey, newRoot.id, 'inserting', left.id, right.id));
+      frames.push(this.mkFrameSplit('中间 key ' + upKey + ' 向上弹出，创建新根', upKey, null, 'inserting', left.id, right.id));
+      frames.push(this.mkFrameSplit('新根节点创建完成，左右子节点归位', upKey, newRoot.id, 'inserting', left.id, right.id));
     }
   }
 

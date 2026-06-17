@@ -24,93 +24,108 @@ interface LaidOutNode extends BTreeNodeData {
   x: number;
   y: number;
   width: number;
+  centerX: number;
 }
 
-const NODE_PADDING_X = 12;
-const NODE_PADDING_Y = 10;
-const KEY_WIDTH = 36;
-const KEY_GAP = 4;
-const LEVEL_GAP = 90;
-const NODE_GAP = 30;
+const K_W = 40;
+const K_H = 34;
+const K_GAP = 4;
+const PAD_X = 10;
+const PAD_Y = 8;
+const LV_GAP = 100;
+const ND_GAP = 40;
 
-function nodeWidth(keys: number[]): number {
-  return NODE_PADDING_X * 2 + Math.max(keys.length, 1) * KEY_WIDTH + Math.max(keys.length - 1, 0) * KEY_GAP;
+function nodeW(nKeys: number): number {
+  const c = Math.max(nKeys, 1);
+  return PAD_X * 2 + c * K_W + (c - 1) * K_GAP;
 }
 
 function layoutTree(
   nodes: Record<string, BTreeNodeData>,
   rootId: string | null
 ): LaidOutNode[] {
-  if (!rootId) return [];
-
+  if (!rootId || !nodes[rootId]) return [];
   const result: LaidOutNode[] = [];
 
-  const layout = (nodeId: string, depth: number, offsetX: number): { width: number; offset: number } => {
-    const node = nodes[nodeId];
-    if (!node) return { width: 0, offset: 0 };
+  const layout = (id: string, depth: number, startX: number): { width: number; centerX: number } => {
+    const nd = nodes[id];
+    if (!nd) return { width: 0, centerX: 0 };
 
-    let totalWidth = 0;
-    const childOffsets: number[] = [];
+    const selfW = nodeW(nd.keys.length);
 
-    node.children.forEach((childId, i) => {
-      const r = layout(childId, depth + 1, offsetX + totalWidth);
-      childOffsets.push(r.offset);
-      if (i > 0) totalWidth += NODE_GAP;
-      totalWidth += r.width;
-    });
-
-    const selfWidth = nodeWidth(node.keys);
-    const finalWidth = Math.max(totalWidth, selfWidth);
-
-    let centerX: number;
-    if (totalWidth === 0) {
-      centerX = offsetX + finalWidth / 2;
-    } else {
-      const childCenter = (childOffsets[0] + childOffsets[childOffsets.length - 1]) / 2;
-      centerX = childCenter;
+    if (nd.children.length === 0) {
+      result.push({
+        ...nd,
+        x: startX,
+        y: depth * (K_H + PAD_Y * 2 + LV_GAP) + 30,
+        width: selfW,
+        centerX: startX + selfW / 2,
+      });
+      return { width: selfW, centerX: startX + selfW / 2 };
     }
 
-    result.push({
-      ...node,
-      x: centerX - selfWidth / 2,
-      y: depth * (60 + LEVEL_GAP) + 30,
-      width: selfWidth,
+    let childTotalW = 0;
+    const childCenters: number[] = [];
+
+    nd.children.forEach((cid, i) => {
+      const childX = startX + childTotalW + (i > 0 ? ND_GAP : 0);
+      if (i > 0) childTotalW += ND_GAP;
+      const cr = layout(cid, depth + 1, childX);
+      childCenters.push(cr.centerX);
+      childTotalW += cr.width;
     });
 
-    return { width: finalWidth, offset: centerX };
+    const firstC = childCenters[0];
+    const lastC = childCenters[childCenters.length - 1];
+    const childrenCx = (firstC + lastC) / 2;
+    const totalW = Math.max(selfW, childTotalW);
+
+    const shift = (totalW - childTotalW) / 2;
+    if (shift > 0) {
+      nd.children.forEach((cid) => shiftSubtree(cid, shift, depth + 1, result));
+    }
+
+    const selfCx = childrenCx + shift;
+
+    result.push({
+      ...nd,
+      x: selfCx - selfW / 2,
+      y: depth * (K_H + PAD_Y * 2 + LV_GAP) + 30,
+      width: selfW,
+      centerX: selfCx,
+    });
+
+    return { width: totalW, centerX: selfCx };
   };
 
-  layout(rootId, 0, 0);
+  const shiftSubtree = (id: string, delta: number, depth: number, list: LaidOutNode[]) => {
+    const nd = list.find((n) => n.id === id);
+    if (!nd) return;
+    nd.x += delta;
+    nd.centerX += delta;
+    nd.children.forEach((cid) => shiftSubtree(cid, delta, depth + 1, list));
+  };
+
+  layout(rootId, 0, 40);
+
   return result;
 }
 
-function highlightColor(type: HighlightType | undefined): string {
-  switch (type) {
-    case 'searching': return 'border-blue-500 bg-blue-50';
-    case 'splitting': return 'border-red-500 bg-red-50';
-    case 'merging': return 'border-orange-500 bg-orange-50';
-    case 'borrowing': return 'border-amber-500 bg-amber-50';
-    case 'found': return 'border-green-500 bg-green-50';
-    case 'inserting': return 'border-emerald-500 bg-emerald-50';
-    default: return 'border-slate-300 bg-white';
-  }
-}
-
-function highlightShadow(type: HighlightType | undefined): string {
-  switch (type) {
-    case 'searching': return '0 0 0 3px rgba(59,130,246,0.3), 0 0 12px rgba(59,130,246,0.2)';
-    case 'splitting': return '0 0 0 3px rgba(239,68,68,0.4), 0 0 16px rgba(239,68,68,0.3), 0 0 24px rgba(239,68,68,0.15)';
-    case 'merging': return '0 0 0 3px rgba(249,115,22,0.3), 0 0 12px rgba(249,115,22,0.2)';
-    case 'borrowing': return '0 0 0 3px rgba(245,158,11,0.3), 0 0 12px rgba(245,158,11,0.2)';
-    case 'found': return '0 0 0 3px rgba(34,197,94,0.4), 0 0 12px rgba(34,197,94,0.2)';
-    case 'inserting': return '0 0 0 3px rgba(16,185,129,0.3), 0 0 12px rgba(16,185,129,0.2)';
-    default: return '0 1px 3px rgba(0,0,0,0.08)';
+function colorsOf(hl: HighlightType | undefined) {
+  switch (hl) {
+    case 'searching': return { stroke: '#3b82f6', fill: '#eff6ff', key: '#bfdbfe', keyText: '#1e40af' };
+    case 'splitting': return { stroke: '#ef4444', fill: '#fee2e2', key: '#fca5a5', keyText: '#991b1b' };
+    case 'merging': return { stroke: '#f97316', fill: '#ffedd5', key: '#fdba74', keyText: '#9a3412' };
+    case 'borrowing': return { stroke: '#f59e0b', fill: '#fef3c7', key: '#fcd34d', keyText: '#92400e' };
+    case 'found': return { stroke: '#22c55e', fill: '#dcfce7', key: '#86efac', keyText: '#166534' };
+    case 'inserting': return { stroke: '#10b981', fill: '#d1fae5', key: '#6ee7b7', keyText: '#065f46' };
+    default: return { stroke: '#cbd5e1', fill: '#ffffff', key: '#f1f5f9', keyText: '#334155' };
   }
 }
 
 export default function BTreeCanvas({ frame }: BTreeCanvasProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const prevPositions = useRef<Record<string, { x: number; y: number }>>({});
+  const nodeH = K_H + PAD_Y * 2;
 
   const { laidOut, bounds, highlights } = useMemo(() => {
     if (!frame) return { laidOut: [] as LaidOutNode[], bounds: { w: 0, h: 0 }, highlights: {} as Record<string, HighlightType> };
@@ -118,19 +133,13 @@ export default function BTreeCanvas({ frame }: BTreeCanvasProps) {
     let maxX = 0, maxY = 0;
     laid.forEach((n) => {
       maxX = Math.max(maxX, n.x + n.width);
-      maxY = Math.max(maxY, n.y + 60);
+      maxY = Math.max(maxY, n.y + nodeH);
     });
     const hl: Record<string, HighlightType> = {};
     if (frame.type && frame.nodeId) hl[frame.nodeId] = frame.type;
     if (frame.path) frame.path.forEach((p) => { if (!hl[p]) hl[p] = 'searching'; });
-    return { laidOut: laid, bounds: { w: maxX + 40, h: maxY + 40 }, highlights: hl };
-  }, [frame]);
-
-  useEffect(() => {
-    const posMap: Record<string, { x: number; y: number }> = {};
-    laidOut.forEach((n) => { posMap[n.id] = { x: n.x, y: n.y }; });
-    prevPositions.current = posMap;
-  }, [laidOut]);
+    return { laidOut: laid, bounds: { w: maxX + 40, h: maxY + 60 }, highlights: hl };
+  }, [frame, nodeH]);
 
   if (!frame) {
     return (
@@ -145,254 +154,330 @@ export default function BTreeCanvas({ frame }: BTreeCanvasProps) {
   const nodeMap: Record<string, LaidOutNode> = {};
   laidOut.forEach((n) => { nodeMap[n.id] = n; });
 
+  const splitNode = frame.type === 'splitting' && frame.nodeId ? nodeMap[frame.nodeId] : null;
   const selectedNode = selectedId ? frame.nodes[selectedId] : null;
 
+  const showUpKey = (frame.type === 'splitting' && splitNode != null) || (frame.splitInfo != null && frame.insertingKey != null);
+
+  const upKeyStartY = splitNode ? splitNode.y + nodeH / 2 : 
+    (frame.splitInfo ? (() => {
+      const left = nodeMap[frame.splitInfo.leftId];
+      const right = nodeMap[frame.splitInfo.rightId];
+      if (left && right) return (left.y + right.y) / 2;
+      return 100;
+    })() : 100);
+
+  const upKeyX = splitNode ? splitNode.centerX :
+    (frame.splitInfo ? (() => {
+      const left = nodeMap[frame.splitInfo.leftId];
+      const right = nodeMap[frame.splitInfo.rightId];
+      if (left && right) return (left.centerX + right.centerX) / 2;
+      return 100;
+    })() : 100);
+
   return (
-    <div className="relative h-full overflow-auto bg-slate-50">
+    <div className="relative h-full overflow-auto bg-gradient-to-b from-slate-50 to-white">
       <svg width={svgW} height={svgH} className="block">
         <defs>
-          <marker id="arrow-sky" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
-            <path d="M0,0 L10,5 L0,10 z" fill="#0ea5e9" />
+          <marker id="bt-edge" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+            <path d="M0,0 L7,3.5 L0,7 z" fill="#94a3b8" />
           </marker>
-          <filter id="glow-red">
-            <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
-            <feMerge>
-              <feMergeNode in="coloredBlur"/>
-              <feMergeNode in="SourceGraphic"/>
-            </feMerge>
+          <marker id="bt-edge-blue" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+            <path d="M0,0 L7,3.5 L0,7 z" fill="#3b82f6" />
+          </marker>
+          <marker id="bt-chain" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+            <path d="M0,0 L9,4.5 L0,9 z" fill="#0ea5e9" />
+          </marker>
+          <filter id="bt-glow-red" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="6" result="blur" />
+            <feFlood floodColor="#ef4444" floodOpacity="0.8" result="red" />
+            <feComposite in="red" in2="blur" operator="in" result="red-glow" />
+            <feMerge><feMergeNode in="red-glow" /><feMergeNode in="SourceGraphic" /></feMerge>
           </filter>
-          <filter id="glow-green">
-            <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
-            <feMerge>
-              <feMergeNode in="coloredBlur"/>
-              <feMergeNode in="SourceGraphic"/>
-            </feMerge>
+          <filter id="bt-glow-green" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="3" result="b" />
+            <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
           </filter>
         </defs>
 
-        {frame.leafChain?.map((link, i) => {
-          const from = nodeMap[link.from];
-          const to = nodeMap[link.to];
-          if (!from || !to) return null;
-          const y1 = from.y + 30;
-          const y2 = to.y + 30;
-          return (
-            <line
-              key={`chain-${i}`}
-              x1={from.x + from.width}
-              y1={y1}
-              x2={to.x}
-              y2={y2}
-              stroke="#0ea5e9"
-              strokeWidth={2}
-              strokeDasharray="6 4"
-              markerEnd="url(#arrow-sky)"
-            />
-          );
-        })}
+        <g>
+          {laidOut.flatMap((node) =>
+            node.children.map((childId, i) => {
+              const child = nodeMap[childId];
+              if (!child) return null;
+              const onPath = highlights[node.id] === 'searching' && highlights[childId] === 'searching';
+              const exitX = node.x + (node.width / (node.children.length + 1)) * (i + 1);
+              return (
+                <motion.line
+                  key={`edge-${node.id}-${childId}`}
+                  initial={{ opacity: 0 }}
+                  animate={{
+                    x1: exitX,
+                    y1: node.y + nodeH,
+                    x2: child.centerX,
+                    y2: child.y,
+                    stroke: onPath ? '#3b82f6' : '#94a3b8',
+                    strokeWidth: onPath ? 2.5 : 1.5,
+                    opacity: 1,
+                  }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.4, ease: 'easeInOut' }}
+                  markerEnd={onPath ? 'url(#bt-edge-blue)' : 'url(#bt-edge)'}
+                />
+              );
+            })
+          )}
+        </g>
 
-        {laidOut.map((node) =>
-          node.children.map((childId, i) => {
-            const child = nodeMap[childId];
-            if (!child) return null;
-            const isOnPath = highlights[node.id] === 'searching' && highlights[childId] === 'searching';
+        <g>
+          {frame.leafChain?.map((link, i) => {
+            const from = nodeMap[link.from];
+            const to = nodeMap[link.to];
+            if (!from || !to) return null;
+            const midY = from.y + nodeH / 2;
             return (
               <motion.line
-                key={`edge-${node.id}-${i}`}
-                initial={{ opacity: 0.3 }}
+                key={`chain-${i}`}
+                initial={{ opacity: 0 }}
                 animate={{
-                  x1: node.x + (node.width / (node.children.length + 1)) * (i + 1),
-                  y1: node.y + 48,
-                  x2: child.x + child.width / 2,
-                  y2: child.y,
+                  x1: from.x + from.width,
+                  y1: midY,
+                  x2: to.x - 2,
+                  y2: midY,
                   opacity: 1,
-                  stroke: isOnPath ? '#3b82f6' : '#94a3b8',
-                  strokeWidth: isOnPath ? 2.5 : 1.5,
                 }}
-                transition={{ duration: 0.5, ease: 'easeInOut' }}
+                transition={{ duration: 0.4 }}
+                stroke="#0ea5e9"
+                strokeWidth={2}
+                strokeDasharray="5 3"
+                markerEnd="url(#bt-chain)"
               />
             );
-          })
-        )}
+          })}
+        </g>
 
-        {frame.insertingKey != null && frame.type === 'splitting' && frame.nodeId && (() => {
-          const n = nodeMap[frame.nodeId];
-          if (!n) return null;
-          return (
-            <motion.rect
-              x={n.x - 4}
-              y={n.y - 4}
-              width={n.width + 8}
-              height={52}
-              rx={10}
-              fill="none"
-              stroke="#ef4444"
-              strokeWidth={3}
-              filter="url(#glow-red)"
-              initial={{ opacity: 0.5 }}
-              animate={{ opacity: [0.5, 1, 0.5, 1, 0.5, 1] }}
-              transition={{ duration: 1.2, repeat: Infinity }}
-            />
-          );
-        })()}
-      </svg>
-
-      <div className="absolute inset-0 pointer-events-none" style={{ width: svgW, height: svgH }}>
         <AnimatePresence mode="popLayout">
           {laidOut.map((node) => {
             const hl = highlights[node.id];
+            const cs = colorsOf(hl);
             const isSelected = selectedId === node.id;
             const isSplitting = hl === 'splitting';
             const isFound = hl === 'found';
-            const isInserting = hl === 'inserting';
-            const isSearching = hl === 'searching';
-            const isBorrowing = hl === 'borrowing';
-            const isMerging = hl === 'merging';
 
             return (
-              <motion.div
-                key={node.id}
-                layout
-                layoutId={node.id}
-                initial={{ opacity: 0, scale: 0.6, y: -20 }}
-                animate={{
-                  opacity: 1,
-                  scale: isSplitting ? [1, 1.08, 1, 1.08, 1] : 1,
-                  x: node.x + 20,
-                  y: node.y,
-                  boxShadow: highlightShadow(hl),
-                  borderColor: isSplitting ? '#ef4444' : isFound ? '#22c55e' : isInserting ? '#10b981' : isSearching ? '#3b82f6' : isBorrowing ? '#f59e0b' : isMerging ? '#f97316' : '#cbd5e1',
-                  backgroundColor: isSplitting ? '#fef2f2' : isFound ? '#f0fdf4' : isInserting ? '#ecfdf5' : isSearching ? '#eff6ff' : isBorrowing ? '#fffbeb' : isMerging ? '#fff7ed' : '#ffffff',
-                }}
-                exit={{ opacity: 0, scale: 0.5, transition: { duration: 0.3 } }}
-                transition={{
-                  layout: { duration: 0.5, ease: 'easeInOut' },
-                  scale: { duration: isSplitting ? 0.8 : 0.3, repeat: isSplitting ? Infinity : 0 },
-                  boxShadow: { duration: 0.3 },
-                  borderColor: { duration: 0.3 },
-                  backgroundColor: { duration: 0.3 },
-                  x: { duration: 0.5, ease: 'easeInOut' },
-                  y: { duration: 0.5, ease: 'easeInOut' },
-                  opacity: { duration: 0.3 },
-                }}
-                className={cn(
-                  'absolute border-2 rounded-lg flex items-center gap-1 px-3 py-2 pointer-events-auto cursor-pointer',
-                  isSelected && 'ring-2 ring-primary-500'
+              <g key={node.id}>
+                <motion.rect
+                  layoutId={`nd-${node.id}`}
+                  initial={{ opacity: 0, scale: 0.7 }}
+                  animate={{
+                    x: node.x,
+                    y: node.y,
+                    width: node.width,
+                    height: nodeH,
+                    rx: 8,
+                    fill: cs.fill,
+                    stroke: cs.stroke,
+                    strokeWidth: isSplitting || isFound ? 3.5 : 2,
+                    filter: isSplitting ? 'url(#bt-glow-red)' : isFound ? 'url(#bt-glow-green)' : 'none',
+                    scale: isSplitting ? [1, 1.08, 1, 1.08, 1] : 1,
+                    opacity: 1,
+                  }}
+                  exit={{ opacity: 0, scale: 0.6 }}
+                  transition={{
+                    layout: { duration: 0.5, ease: 'easeInOut' },
+                    scale: { duration: isSplitting ? 0.7 : 0.3, repeat: isSplitting ? Infinity : 0, repeatType: 'loop' },
+                    fill: { duration: 0.3 },
+                    stroke: { duration: 0.3 },
+                    filter: { duration: 0.25 },
+                    opacity: { duration: 0.25 },
+                  }}
+                  style={{ cursor: 'pointer', transformOrigin: `${node.centerX}px ${node.y + nodeH / 2}px` }}
+                  onClick={() => setSelectedId(isSelected ? null : node.id)}
+                />
+
+                {isSelected && (
+                  <motion.rect
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    x={node.x - 4}
+                    y={node.y - 4}
+                    width={node.width + 8}
+                    height={nodeH + 8}
+                    rx={11}
+                    fill="none"
+                    stroke="#6366f1"
+                    strokeWidth={2}
+                    strokeDasharray="5 3"
+                  />
                 )}
-                style={{ width: node.width }}
-                onClick={() => setSelectedId(isSelected ? null : node.id)}
-              >
-                {node.keys.map((k, i) => {
-                  const isKeyHighlight =
-                    (isFound && frame.insertingKey != null && k === frame.insertingKey) ||
-                    (isInserting && frame.insertingKey != null && k === frame.insertingKey);
+
+                {node.keys.map((k, ki) => {
+                  const kx = node.x + PAD_X + ki * (K_W + K_GAP);
+                  const ky = node.y + PAD_Y;
+                  const isKHi =
+                    (hl === 'found' && frame.insertingKey != null && k === frame.insertingKey) ||
+                    (hl === 'inserting' && frame.insertingKey != null && k === frame.insertingKey);
+
                   return (
-                    <motion.div
-                      key={`${node.id}-key-${i}`}
-                      layout
-                      initial={{ scale: 0, opacity: 0 }}
-                      animate={{
-                        scale: isKeyHighlight ? [1, 1.3, 1] : 1,
-                        opacity: 1,
-                      }}
-                      transition={{
-                        scale: { duration: 0.4, repeat: isKeyHighlight ? 2 : 0 },
-                        layout: { duration: 0.4, ease: 'easeInOut' },
-                      }}
-                      className={cn(
-                        'w-9 h-9 flex items-center justify-center rounded font-mono text-sm font-semibold',
-                        isKeyHighlight
-                          ? 'bg-emerald-500 text-white'
-                          : isSplitting
-                            ? 'bg-red-100 text-red-800'
-                            : isFound
-                              ? 'bg-green-500 text-white'
-                              : isSearching
-                                ? 'bg-blue-100 text-blue-800'
-                                : 'bg-slate-100 text-slate-800'
-                      )}
-                    >
-                      {k}
-                    </motion.div>
+                    <g key={`k-${node.id}-${ki}`}>
+                      <motion.rect
+                        layoutId={`kr-${node.id}-${ki}`}
+                        initial={{ scale: 0, opacity: 0 }}
+                        animate={{
+                          x: kx,
+                          y: ky,
+                          width: K_W,
+                          height: K_H,
+                          rx: 6,
+                          fill: isKHi ? '#22c55e' : cs.key,
+                          scale: isKHi ? [1, 1.2, 1] : 1,
+                          opacity: 1,
+                        }}
+                        transition={{
+                          layout: { duration: 0.4, ease: 'easeInOut' },
+                          scale: { duration: 0.45, repeat: isKHi ? 2 : 0 },
+                          fill: { duration: 0.3 },
+                        }}
+                      />
+                      <motion.text
+                        layoutId={`kt-${node.id}-${ki}`}
+                        initial={{ opacity: 0, y: 4 }}
+                        animate={{
+                          x: kx + K_W / 2,
+                          y: ky + K_H / 2 + 5,
+                          opacity: 1,
+                          fill: isKHi ? '#ffffff' : cs.keyText,
+                        }}
+                        transition={{ layout: { duration: 0.4 }, fill: { duration: 0.3 } }}
+                        textAnchor="middle"
+                        fontSize="14"
+                        fontWeight="600"
+                        fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
+                      >
+                        {k}
+                      </motion.text>
+                    </g>
                   );
                 })}
+
                 {node.keys.length === 0 && (
-                  <div className="w-full text-center text-xs text-slate-400">空</div>
+                  <text
+                    x={node.centerX}
+                    y={node.y + nodeH / 2 + 4}
+                    textAnchor="middle"
+                    fontSize="11"
+                    fill="#94a3b8"
+                  >
+                    空
+                  </text>
                 )}
-              </motion.div>
+              </g>
             );
           })}
         </AnimatePresence>
 
-        {frame.type === 'splitting' && frame.nodeId && frame.insertingKey != null && (() => {
-          const n = nodeMap[frame.nodeId];
-          if (!n) return null;
-          return (
-            <motion.div
-              key={`upkey-${frame.insertingKey}`}
-              initial={{ opacity: 0, y: n.y + 20, scale: 1.5 }}
-              animate={{ opacity: [0, 1, 1, 0.8], y: n.y - 30, scale: [1.5, 1.3, 1.1, 1] }}
-              transition={{ duration: 1.2, ease: 'easeOut' }}
-              className="absolute flex items-center justify-center w-10 h-10 rounded-full bg-red-500 text-white font-mono font-bold text-sm pointer-events-none"
-              style={{ left: n.x + n.width / 2 - 20 }}
+        {showUpKey && (
+          <g>
+            <motion.circle
+              key="upkey-circle"
+              initial={{ r: 0, opacity: 0, cy: upKeyStartY }}
+              animate={{
+                cx: upKeyX,
+                cy: splitNode ? splitNode.y - 28 : upKeyStartY - 60,
+                r: 17,
+                opacity: [0, 1, 1, 0.9],
+              }}
+              transition={{ duration: 1, ease: 'easeOut' }}
+              fill="#ef4444"
+              style={{ transformOrigin: `${upKeyX}px ${splitNode ? splitNode.y - 28 : upKeyStartY - 60}px` }}
+            />
+            <motion.text
+              key="upkey-text"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{
+                x: upKeyX,
+                y: splitNode ? splitNode.y - 23 : upKeyStartY - 55,
+                opacity: [0, 1, 1, 0.9],
+              }}
+              transition={{ duration: 1, ease: 'easeOut' }}
+              textAnchor="middle"
+              fontSize="14"
+              fontWeight="700"
+              fill="white"
+              fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
             >
               {frame.insertingKey}
-            </motion.div>
-          );
-        })()}
+            </motion.text>
+            <motion.path
+              key="upkey-path"
+              initial={{ pathLength: 0, opacity: 0 }}
+              animate={{ pathLength: 1, opacity: 0.5 }}
+              transition={{ duration: 0.8, delay: 0.1 }}
+              d={`M ${upKeyX} ${upKeyStartY + 2} Q ${upKeyX + 25} ${upKeyStartY - 15}, ${upKeyX} ${upKeyStartY - 55}`}
+              stroke="#ef4444"
+              strokeWidth={2}
+              strokeDasharray="4 2"
+              fill="none"
+            />
+          </g>
+        )}
 
         {frame.type === 'borrowing' && frame.nodeId && (() => {
-          const n = nodeMap[frame.nodeId];
+          const n = nodeMap[frame.nodeId!];
           if (!n) return null;
           return (
-            <motion.div
-              key={`borrow-arrow-${frame.nodeId}`}
-              initial={{ opacity: 0, x: n.x + n.width + 10 }}
-              animate={{ opacity: [0, 1, 1, 0], x: [n.x + n.width + 10, n.x + n.width + 2] }}
-              transition={{ duration: 0.8, ease: 'easeInOut' }}
-              className="absolute text-2xl pointer-events-none"
-              style={{ top: n.y + 12 }}
+            <motion.text
+              initial={{ opacity: 0, x: 15 }}
+              animate={{ opacity: [0, 1, 1, 0], x: [15, 0, 0, -8] }}
+              transition={{ duration: 1, repeat: Infinity }}
+              x={n.x + n.width + 6}
+              y={n.y + nodeH / 2 + 6}
+              fontSize="18"
+              fill="#f59e0b"
+              fontWeight="bold"
             >
               ←
-            </motion.div>
+            </motion.text>
           );
         })()}
-
-        {frame.type === 'merging' && frame.nodeId && (() => {
-          const n = nodeMap[frame.nodeId];
-          if (!n) return null;
-          return (
-            <motion.div
-              key={`merge-glow-${frame.nodeId}`}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: [0, 0.6, 0] }}
-              transition={{ duration: 1, repeat: Infinity }}
-              className="absolute rounded-lg pointer-events-none"
-              style={{
-                left: n.x + 16,
-                top: n.y - 4,
-                width: n.width + 8,
-                height: 52,
-                background: 'radial-gradient(ellipse, rgba(249,115,22,0.3), transparent)',
-              }}
-            />
-          );
-        })()}
-      </div>
+      </svg>
 
       {selectedNode && (
-        <div className="absolute right-4 top-4 card p-4 text-sm pointer-events-auto max-w-xs z-10">
+        <div className="absolute right-4 top-4 card p-4 text-sm pointer-events-auto max-w-xs z-10 shadow-xl border border-slate-200">
           <div className="flex items-center justify-between mb-2">
-            <h4 className="font-semibold">节点详情</h4>
-            <button onClick={() => setSelectedId(null)} className="text-slate-400 hover:text-slate-600">✕</button>
+            <h4 className="font-semibold text-slate-800">节点详情</h4>
+            <button onClick={() => setSelectedId(null)} className="text-slate-400 hover:text-slate-600 text-base">✕</button>
           </div>
-          <div className="space-y-1 text-slate-600">
-            <div>ID: <span className="font-mono text-slate-800">{selectedNode.id}</span></div>
-            <div>层级: <span className="text-slate-800">L{selectedNode.level}</span></div>
-            <div>类型: <span className="text-slate-800">{selectedNode.isLeaf ? '叶子节点' : '内部节点'}</span></div>
-            <div>Key数量: <span className="text-slate-800">{selectedNode.keys.length} / {frame.order - 1}</span></div>
-            <div>Keys: <span className="font-mono text-slate-800">[{selectedNode.keys.join(', ')}]</span></div>
-            <div>子节点数: <span className="text-slate-800">{selectedNode.children.length}</span></div>
+          <div className="space-y-1.5 text-slate-600">
+            <div className="flex justify-between">
+              <span>ID</span>
+              <span className="font-mono text-slate-800 text-xs">{selectedNode.id}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>层级</span>
+              <span className="text-slate-800">L{selectedNode.level}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>类型</span>
+              <span className="text-slate-800">{selectedNode.isLeaf ? '叶子节点' : '内部节点'}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Key 数量</span>
+              <span className="text-slate-800 font-mono">{selectedNode.keys.length} / {frame.order - 1}</span>
+            </div>
+            <div>
+              <span>Keys</span>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {selectedNode.keys.map((k) => (
+                  <span key={k} className="px-1.5 py-0.5 bg-slate-100 rounded font-mono text-xs">{k}</span>
+                ))}
+                {selectedNode.keys.length === 0 && <span className="text-slate-400 text-xs">无</span>}
+              </div>
+            </div>
+            <div className="flex justify-between">
+              <span>子节点数</span>
+              <span className="text-slate-800 font-mono">{selectedNode.children.length}</span>
+            </div>
           </div>
         </div>
       )}
