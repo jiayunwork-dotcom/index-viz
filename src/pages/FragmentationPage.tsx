@@ -18,6 +18,7 @@ export default function FragmentationPage() {
   const [currentOperation, setCurrentOperation] = useState<string | null>(null);
   const [highlightedPageId, setHighlightedPageId] = useState<string | null>(null);
   const [scanningPageIds, setScanningPageIds] = useState<string[]>([]);
+  const [scanKey, setScanKey] = useState<number | null>(null);
 
   const [pages, setPages] = useState<Record<string, PhysicalPage>>({});
   const [logicalNodes, setLogicalNodes] = useState<Record<string, LogicalNode>>({});
@@ -55,6 +56,7 @@ export default function FragmentationPage() {
     setCurrentOperation(null);
     setHighlightedPageId(null);
     setScanningPageIds([]);
+    setScanKey(null);
   }, [syncFromSimulator]);
 
   const handleReset = useCallback(() => {
@@ -70,6 +72,7 @@ export default function FragmentationPage() {
     setCurrentOperation(null);
     setHighlightedPageId(null);
     setScanningPageIds([]);
+    setScanKey(null);
   }, [maxSlots, syncFromSimulator]);
 
   const handlePageDragEnd = useCallback((pageId: string, x: number, y: number) => {
@@ -85,7 +88,14 @@ export default function FragmentationPage() {
 
   const getDelayMs = () => {
     const baseDelay = 500;
-    return Math.max(50, baseDelay / speed);
+    return Math.max(30, baseDelay / speed);
+  };
+
+  const findSlotForKey = (pageId: string, key: number): number => {
+    const sim = simulatorRef.current;
+    const page = sim.pages[pageId];
+    if (!page) return -1;
+    return page.slots.findIndex((s) => s.key === key && (s.status === 'used' || s.status === 'scanning'));
   };
 
   const handleSimulateFragmentation = useCallback(async () => {
@@ -113,26 +123,39 @@ export default function FragmentationPage() {
       const frames = sim.insert(key);
 
       for (const frame of frames) {
+        if (!isRunningRef.current) break;
+
         if (frame.type === 'insert') {
           setHighlightedPageId(frame.pageId);
           syncFromSimulator();
           await delay(getDelayMs());
         } else if (frame.type === 'split') {
           setAnimationPhase('splitting');
-          setHighlightedPageId(frame.newPageId);
 
           const sourcePage = sim.pages[frame.sourcePageId];
-          if (sourcePage) {
-            sourcePage.isSplitting = true;
-            setPages({ ...sim.pages });
-          }
-          await delay(getDelayMs() * 1.5);
+          const newPage = sim.pages[frame.newPageId];
 
-          if (sourcePage) {
-            sourcePage.isSplitting = false;
+          if (sourcePage && newPage) {
+            sourcePage.isTearing = true;
+            newPage.splitFromX = sourcePage.x;
+            newPage.splitFromY = sourcePage.y;
+            newPage.splitDirection = 'right';
+            newPage.isNew = true;
+            setPages({ ...sim.pages });
+            setHighlightedPageId(frame.sourcePageId);
+            await delay(getDelayMs() * 2);
+
+            sourcePage.isTearing = false;
+            setPages({ ...sim.pages });
+            await delay(getDelayMs());
+
+            newPage.splitFromX = undefined;
+            newPage.splitFromY = undefined;
+            newPage.splitDirection = undefined;
           }
+
           syncFromSimulator();
-          await delay(getDelayMs());
+          await delay(getDelayMs() * 0.5);
         }
       }
 
@@ -153,13 +176,30 @@ export default function FragmentationPage() {
       setAnimationPhase('deleting');
       setCurrentOperation(`删除 ${key} (${deleteIdx + 1}/${deleteKeys.length})`);
 
-      const frames = sim.delete(key);
-      for (const frame of frames) {
-        if (!isRunningRef.current) break;
-        if (frame.type === 'delete') {
-          setHighlightedPageId(frame.pageId);
-          syncFromSimulator();
-          await delay(getDelayMs() * 0.7);
+      const pageId = findLeafPageForKey(sim, key);
+      if (pageId) {
+        const slotIdx = findSlotForKey(pageId, key);
+        if (slotIdx >= 0) {
+          const page = sim.pages[pageId];
+          setHighlightedPageId(pageId);
+
+          page.slots[slotIdx].status = 'deleting';
+          setPages({ ...sim.pages });
+          await delay(getDelayMs() * 0.5);
+
+          page.slots[slotIdx].status = 'deleted';
+          setPages({ ...sim.pages });
+          await delay(getDelayMs() * 0.3);
+
+          const logicalNode = Object.values(sim.logicalNodes).find(
+            (n) => n.pageId === pageId
+          );
+          if (logicalNode) {
+            const keyIdx = logicalNode.keys.indexOf(key);
+            if (keyIdx >= 0) {
+              logicalNode.keys.splice(keyIdx, 1);
+            }
+          }
         }
       }
 
@@ -185,23 +225,52 @@ export default function FragmentationPage() {
     setAnimationPhase('reindex_scan');
     setCurrentOperation(`扫描阶段: 共 ${allKeys.length} 个 key`);
 
+    let lastScanPageId: string | null = null;
+    let lastScanSlotIdx: number = -1;
+
     for (let i = 0; i < allKeys.length; i++) {
       if (!isRunningRef.current) break;
-      setScanningPageIds((prev) => {
-        const key = allKeys[i];
-        for (const pageId of sim.leafChain) {
+
+      const key = allKeys[i];
+      setScanKey(key);
+
+      const pageId = findLeafPageForKey(sim, key);
+      if (pageId) {
+        const slotIdx = findSlotForKey(pageId, key);
+        if (slotIdx >= 0) {
           const page = sim.pages[pageId];
-          if (page && page.slots.some((s) => s.key === key && s.status === 'used')) {
-            if (!prev.includes(pageId)) {
-              return [...prev, pageId];
+
+          if (lastScanPageId && lastScanPageId !== pageId && lastScanSlotIdx >= 0) {
+            const lastPage = sim.pages[lastScanPageId];
+            if (lastPage && lastPage.slots[lastScanSlotIdx]) {
+              lastPage.slots[lastScanSlotIdx].status = 'used';
             }
-            break;
           }
+
+          if (page.slots[slotIdx]) {
+            page.slots[slotIdx].status = 'scanning';
+          }
+
+          setScanningPageIds((prev) =>
+            prev.includes(pageId) ? prev : [...prev, pageId]
+          );
+          setPages({ ...sim.pages });
+
+          lastScanPageId = pageId;
+          lastScanSlotIdx = slotIdx;
         }
-        return prev;
-      });
-      setCurrentOperation(`扫描阶段: ${i + 1}/${allKeys.length}`);
-      await delay(Math.max(20, getDelayMs() * 0.3));
+      }
+
+      setCurrentOperation(`扫描阶段: ${i + 1}/${allKeys.length} - key ${key}`);
+      await delay(Math.max(20, getDelayMs() * 0.5));
+    }
+
+    if (lastScanPageId && lastScanSlotIdx >= 0) {
+      const lastPage = sim.pages[lastScanPageId];
+      if (lastPage && lastPage.slots[lastScanSlotIdx]) {
+        lastPage.slots[lastScanSlotIdx].status = 'used';
+      }
+      setPages({ ...sim.pages });
     }
 
     if (!isRunningRef.current) {
@@ -244,7 +313,7 @@ export default function FragmentationPage() {
 
       setPages({ ...sim.pages, ...oldPages });
       setCurrentOperation(`紧凑阶段: 第 ${newPageIdx + 1} 页`);
-      await delay(getDelayMs());
+      await delay(getDelayMs() * 0.7);
 
       for (
         let i = 0;
@@ -256,7 +325,7 @@ export default function FragmentationPage() {
         setCurrentOperation(
           `紧凑阶段: 第 ${newPageIdx + 1} 页 - key ${allKeys[currentKeyIdx]}`
         );
-        await delay(Math.max(20, getDelayMs() * 0.4));
+        await delay(Math.max(15, getDelayMs() * 0.3));
         currentKeyIdx++;
       }
       newPageIdx++;
@@ -306,8 +375,9 @@ export default function FragmentationPage() {
 
     setAnimationPhase('reindex_relink');
     setCurrentOperation('重链阶段: 连接新页面');
-    syncFromSimulator();
     setScanningPageIds([]);
+    setScanKey(null);
+    syncFromSimulator();
     await delay(getDelayMs() * 2);
 
     isRunningRef.current = false;
@@ -325,6 +395,7 @@ export default function FragmentationPage() {
   useEffect(() => {
     syncFromSimulator();
     return () => {
+      isRunningRef.current = false;
       if (animationTimeoutRef.current) {
         clearTimeout(animationTimeoutRef.current);
       }
@@ -342,6 +413,12 @@ export default function FragmentationPage() {
             展示B+树索引在频繁插入删除后的物理存储碎片化过程以及REINDEX重建效果
           </p>
         </div>
+        {scanKey !== null && (
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-sky-100 text-sky-700 rounded-lg text-sm font-medium">
+            <span className="animate-pulse">🔍</span>
+            正在扫描: {scanKey}
+          </div>
+        )}
       </div>
 
       <div className="flex-1 flex gap-3 min-h-0">
@@ -354,6 +431,7 @@ export default function FragmentationPage() {
               nodes={logicalNodes}
               rootId={logicalRootId}
               highlightNodeId={null}
+              scanKey={scanKey}
             />
           </div>
         </div>
@@ -391,4 +469,22 @@ export default function FragmentationPage() {
       </div>
     </div>
   );
+}
+
+function findLeafPageForKey(sim: FragmentationSimulator, key: number): string | null {
+  if (!sim.logicalRootId) return null;
+  let nodeId = sim.logicalRootId;
+  while (true) {
+    const node = sim.logicalNodes[nodeId];
+    if (!node) return null;
+    if (node.isLeaf) return node.pageId;
+    let childIdx = node.keys.length;
+    for (let i = 0; i < node.keys.length; i++) {
+      if (key < node.keys[i]) {
+        childIdx = i;
+        break;
+      }
+    }
+    nodeId = node.children[childIdx];
+  }
 }

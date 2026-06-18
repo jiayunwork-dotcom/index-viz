@@ -1,8 +1,9 @@
-export type SlotStatus = 'free' | 'used' | 'deleted';
+export type SlotStatus = 'free' | 'used' | 'deleted' | 'deleting' | 'scanning';
 
 export interface Slot {
   key: number | null;
   status: SlotStatus;
+  isAnimating?: boolean;
 }
 
 export interface PhysicalPage {
@@ -16,6 +17,11 @@ export interface PhysicalPage {
   isFading?: boolean;
   isSplitting?: boolean;
   isHighlighted?: boolean;
+  isTearing?: boolean;
+  splitFromX?: number;
+  splitFromY?: number;
+  splitDirection?: 'left' | 'right';
+  scanSlotIndex?: number | null;
 }
 
 export interface LogicalNode {

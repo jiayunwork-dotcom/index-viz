@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import type { LogicalNode } from '@/structures/fragmentation/types';
 
 interface LogicalBTreeViewProps {
@@ -7,6 +7,7 @@ interface LogicalBTreeViewProps {
   rootId: string | null;
   scanPosition?: number;
   highlightNodeId?: string | null;
+  scanKey?: number | null;
 }
 
 interface LaidOutNode extends LogicalNode {
@@ -68,7 +69,6 @@ function layoutTree(
       childResults.push({ ...cr, id: cid, width: childW, centerX: childCenterX - totalWidth / 2 });
     }
 
-    const childrenCenter = 0;
     const selfCenterX = 0;
     const shift = selfCenterX - (totalWidth / 2 - totalWidth / 2);
 
@@ -128,12 +128,12 @@ function layoutTree(
 export default function LogicalBTreeView({
   nodes,
   rootId,
-  scanPosition,
   highlightNodeId,
+  scanKey = null,
 }: LogicalBTreeViewProps) {
   const nodeH = K_H + PAD_Y * 2;
 
-  const { laidOut, bounds, nodeMap } = useMemo(() => {
+  const { laidOut, bounds, nodeMap, scanKeyInfo } = useMemo(() => {
     const laid = layoutTree(nodes, rootId);
     let maxX = 0, maxY = 0;
     laid.forEach((n) => {
@@ -142,8 +142,24 @@ export default function LogicalBTreeView({
     });
     const nm: Record<string, LaidOutNode> = {};
     laid.forEach((n) => { nm[n.id] = n; });
-    return { laidOut: laid, bounds: { w: maxX, h: maxY }, nodeMap: nm };
-  }, [nodes, rootId, nodeH]);
+
+    let scanInfo: { nodeId: string; keyIdx: number; x: number; y: number } | null = null;
+    if (scanKey !== null) {
+      for (const node of laid) {
+        if (node.isLeaf) {
+          const keyIdx = node.keys.indexOf(scanKey);
+          if (keyIdx >= 0) {
+            const kx = node.x + PAD_X + keyIdx * (K_W + K_GAP);
+            const ky = node.y + PAD_Y;
+            scanInfo = { nodeId: node.id, keyIdx, x: kx, y: ky };
+            break;
+          }
+        }
+      }
+    }
+
+    return { laidOut: laid, bounds: { w: maxX, h: maxY }, nodeMap: nm, scanKeyInfo: scanInfo };
+  }, [nodes, rootId, nodeH, scanKey]);
 
   const svgW = Math.max(200, bounds.w);
   const svgH = Math.max(150, bounds.h);
@@ -166,6 +182,13 @@ export default function LogicalBTreeView({
           <marker id="logical-chain" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
             <path d="M0,0 L8,4 L0,8 z" fill="#0ea5e9" />
           </marker>
+          <filter id="scan-glow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="3" result="b" />
+            <feMerge>
+              <feMergeNode in="b" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
         </defs>
 
         <g>
@@ -210,27 +233,52 @@ export default function LogicalBTreeView({
                 {node.keys.map((k, ki) => {
                   const kx = node.x + PAD_X + ki * (K_W + K_GAP);
                   const ky = node.y + PAD_Y;
+                  const isScanning = scanKey === k && node.isLeaf;
+
                   return (
                     <g key={`k-${node.id}-${ki}`}>
-                      <rect
+                      <motion.rect
                         x={kx}
                         y={ky}
                         width={K_W}
                         height={K_H}
                         rx={4}
-                        fill={node.isLeaf ? '#d1fae5' : '#f1f5f9'}
+                        fill={isScanning ? '#0ea5e9' : node.isLeaf ? '#d1fae5' : '#f1f5f9'}
+                        animate={{
+                          fill: isScanning ? '#0ea5e9' : node.isLeaf ? '#d1fae5' : '#f1f5f9',
+                        }}
+                        transition={{ duration: 0.3 }}
+                        filter={isScanning ? 'url(#scan-glow)' : 'none'}
                       />
-                      <text
+                      <motion.text
                         x={kx + K_W / 2}
                         y={ky + K_H / 2 + 4}
                         textAnchor="middle"
                         fontSize="12"
                         fontWeight="500"
                         fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
-                        fill="#334155"
+                        fill={isScanning ? '#ffffff' : '#334155'}
+                        animate={{
+                          fill: isScanning ? '#ffffff' : '#334155',
+                        }}
+                        transition={{ duration: 0.3 }}
                       >
                         {k}
-                      </text>
+                      </motion.text>
+
+                      {isScanning && (
+                        <motion.circle
+                          cx={kx + K_W / 2}
+                          cy={ky + K_H / 2}
+                          r={K_W / 2 + 4}
+                          fill="none"
+                          stroke="#0ea5e9"
+                          strokeWidth="2"
+                          initial={{ scale: 0.8, opacity: 0.8 }}
+                          animate={{ scale: [1, 1.3, 1], opacity: [0.8, 0, 0.8] }}
+                          transition={{ duration: 1, repeat: Infinity, repeatType: 'loop' }}
+                        />
+                      )}
                     </g>
                   );
                 })}
