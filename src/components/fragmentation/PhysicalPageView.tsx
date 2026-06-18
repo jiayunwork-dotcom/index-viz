@@ -9,6 +9,7 @@ interface PhysicalPageViewProps {
   highlightedPageId: string | null;
   scanningPageIds: string[];
   onPageDragEnd: (pageId: string, x: number, y: number) => void;
+  isAnimated?: boolean;
 }
 
 export default function PhysicalPageView({
@@ -17,6 +18,7 @@ export default function PhysicalPageView({
   highlightedPageId,
   scanningPageIds,
   onPageDragEnd,
+  isAnimated = false,
 }: PhysicalPageViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dragPositions, setDragPositions] = useState<Record<string, { x: number; y: number }>>({});
@@ -71,6 +73,7 @@ export default function PhysicalPageView({
             onDragMove={handleDragMove}
             isHighlighted={highlightedPageId === page.id}
             isScanning={scanningPageIds.includes(page.id)}
+            isAnimated={isAnimated}
           />
         ))}
       </div>

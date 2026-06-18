@@ -112,3 +112,25 @@ export interface ReindexFrame {
 }
 
 export type AnimationFrameData = InsertFrame | SplitFrame | DeleteFrame | ReindexFrame;
+
+export type TimelineOperationType = 'insert' | 'delete' | 'split' | 'reindex';
+
+export interface TimelineOperation {
+  id: string;
+  type: TimelineOperationType;
+  description: string;
+  index: number;
+}
+
+export interface StateSnapshot {
+  pages: Record<string, PhysicalPage>;
+  logicalNodes: Record<string, LogicalNode>;
+  logicalRootId: string | null;
+  leafChain: string[];
+  pageOrder: string[];
+  stats: Stats;
+  scanKey: number | null;
+  highlightedPageId: string | null;
+  scanningPageIds: string[];
+  operation: TimelineOperation | null;
+}

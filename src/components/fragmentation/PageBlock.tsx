@@ -8,6 +8,7 @@ interface PageBlockProps {
   onDragMove?: (pageId: string, x: number, y: number) => void;
   isHighlighted?: boolean;
   isScanning?: boolean;
+  isAnimated?: boolean;
 }
 
 const PAGE_WIDTH = 180;
@@ -20,6 +21,7 @@ export default function PageBlock({
   onDragMove,
   isHighlighted = false,
   isScanning = false,
+  isAnimated = false,
 }: PageBlockProps) {
   const [isDragging, setIsDragging] = useState(false);
   const dragStartRef = useRef({ x: 0, y: 0, pageX: 0, pageY: 0 });
@@ -169,6 +171,7 @@ export default function PageBlock({
         height: PAGE_HEIGHT,
         zIndex: isDragging ? 50 : page.isNew ? 40 : page.isTearing || isSplitHalf || isExpanding ? 45 : 10,
         overflow: 'hidden',
+        transition: isAnimated && !isDragging ? 'left 300ms ease-out, top 300ms ease-out' : 'none',
       }}
       initial={
         hasSplitAnimation && !isSplitHalf && !isExpanding

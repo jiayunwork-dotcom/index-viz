@@ -1,14 +1,46 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { FragmentationSimulator } from '@/structures/fragmentation/fragmentation';
-import type { PhysicalPage, LogicalNode, Stats, AnimationPhase } from '@/structures/fragmentation/types';
+import type {
+  PhysicalPage,
+  LogicalNode,
+  Stats,
+  AnimationPhase,
+  TimelineOperation,
+  StateSnapshot,
+} from '@/structures/fragmentation/types';
 import LogicalBTreeView from '@/components/fragmentation/LogicalBTreeView';
 import PhysicalPageView from '@/components/fragmentation/PhysicalPageView';
 import ControlPanel from '@/components/fragmentation/ControlPanel';
 import StatsPanel from '@/components/fragmentation/StatsPanel';
+import Timeline from '@/components/fragmentation/Timeline';
+import { v4 as uuidv4 } from 'uuid';
 
 const DEFAULT_MAX_SLOTS = 8;
 const INSERT_COUNT = 80;
 const DELETE_COUNT = 40;
+
+function deepClonePages(pages: Record<string, PhysicalPage>): Record<string, PhysicalPage> {
+  const result: Record<string, PhysicalPage> = {};
+  Object.entries(pages).forEach(([id, page]) => {
+    result[id] = {
+      ...page,
+      slots: page.slots.map((s) => ({ ...s })),
+    };
+  });
+  return result;
+}
+
+function deepCloneNodes(nodes: Record<string, LogicalNode>): Record<string, LogicalNode> {
+  const result: Record<string, LogicalNode> = {};
+  Object.entries(nodes).forEach(([id, node]) => {
+    result[id] = {
+      ...node,
+      keys: [...node.keys],
+      children: [...node.children],
+    };
+  });
+  return result;
+}
 
 export default function FragmentationPage() {
   const [maxSlots, setMaxSlots] = useState(DEFAULT_MAX_SLOTS);
@@ -33,11 +65,19 @@ export default function FragmentationPage() {
     maxPointerJump: 0,
   });
 
+  const [timelineOperations, setTimelineOperations] = useState<TimelineOperation[]>([]);
+  const [snapshots, setSnapshots] = useState<StateSnapshot[]>([]);
+  const [currentTimelineIndex, setCurrentTimelineIndex] = useState(0);
+  const [isTimelinePlaying, setIsTimelinePlaying] = useState(false);
+  const [isTimelineMode, setIsTimelineMode] = useState(false);
+
   const simulatorRef = useRef<FragmentationSimulator>(
     new FragmentationSimulator(DEFAULT_MAX_SLOTS)
   );
   const animationTimeoutRef = useRef<number | null>(null);
   const isRunningRef = useRef(false);
+  const playIntervalRef = useRef<number | null>(null);
+  const snapshotOpIndexRef = useRef(0);
 
   const syncFromSimulator = useCallback(() => {
     const sim = simulatorRef.current;
@@ -48,6 +88,128 @@ export default function FragmentationPage() {
     setStats(sim.getStats());
   }, []);
 
+  const createSnapshot = useCallback(
+    (operation: TimelineOperation | null): StateSnapshot => {
+      const sim = simulatorRef.current;
+      return {
+        pages: deepClonePages(sim.pages),
+        logicalNodes: deepCloneNodes(sim.logicalNodes),
+        logicalRootId: sim.logicalRootId,
+        leafChain: [...sim.leafChain],
+        pageOrder: [...sim.pageOrder],
+        stats: { ...sim.getStats() },
+        scanKey,
+        highlightedPageId,
+        scanningPageIds: [...scanningPageIds],
+        operation,
+      };
+    },
+    [scanKey, highlightedPageId, scanningPageIds]
+  );
+
+  const addTimelineOperation = useCallback(
+    (type: TimelineOperation['type'], description: string) => {
+      const opIndex = snapshotOpIndexRef.current;
+      const op: TimelineOperation = {
+        id: uuidv4(),
+        type,
+        description,
+        index: opIndex,
+      };
+      snapshotOpIndexRef.current++;
+
+      setTimelineOperations((prev) => [...prev, op]);
+      setSnapshots((prev) => [...prev, createSnapshot(op)]);
+      setCurrentTimelineIndex(opIndex);
+    },
+    [createSnapshot]
+  );
+
+  const applySnapshot = useCallback((snapshot: StateSnapshot) => {
+    setPages({ ...snapshot.pages });
+    setLogicalNodes({ ...snapshot.logicalNodes });
+    setLogicalRootId(snapshot.logicalRootId);
+    setLeafChain([...snapshot.leafChain]);
+    setStats({ ...snapshot.stats });
+    setScanKey(snapshot.scanKey);
+    setHighlightedPageId(snapshot.highlightedPageId);
+    setScanningPageIds([...snapshot.scanningPageIds]);
+    if (snapshot.operation) {
+      setCurrentOperation(snapshot.operation.description);
+    }
+  }, []);
+
+  const handleTimelineIndexChange = useCallback(
+    (index: number) => {
+      if (index < 0 || index >= snapshots.length) return;
+      setCurrentTimelineIndex(index);
+      if (snapshots[index]) {
+        applySnapshot(snapshots[index]);
+      }
+    },
+    [snapshots, applySnapshot]
+  );
+
+  const handleStepBack = useCallback(() => {
+    if (currentTimelineIndex > 0) {
+      handleTimelineIndexChange(currentTimelineIndex - 1);
+    }
+  }, [currentTimelineIndex, handleTimelineIndexChange]);
+
+  const handleStepForward = useCallback(() => {
+    if (currentTimelineIndex < snapshots.length - 1) {
+      handleTimelineIndexChange(currentTimelineIndex + 1);
+    }
+  }, [currentTimelineIndex, snapshots.length, handleTimelineIndexChange]);
+
+  const handlePlayPause = useCallback(() => {
+    if (isTimelinePlaying) {
+      setIsTimelinePlaying(false);
+    } else {
+      if (currentTimelineIndex >= snapshots.length - 1) {
+        setCurrentTimelineIndex(0);
+        if (snapshots[0]) {
+          applySnapshot(snapshots[0]);
+        }
+      }
+      setIsTimelinePlaying(true);
+    }
+  }, [isTimelinePlaying, currentTimelineIndex, snapshots.length, applySnapshot]);
+
+  useEffect(() => {
+    if (!isTimelinePlaying) {
+      if (playIntervalRef.current) {
+        clearInterval(playIntervalRef.current);
+        playIntervalRef.current = null;
+      }
+      return;
+    }
+
+    const baseDelay = 500;
+    const delayMs = Math.max(100, baseDelay / speed);
+
+    playIntervalRef.current = window.setInterval(() => {
+      setCurrentTimelineIndex((prev) => {
+        const next = prev + 1;
+        if (next >= snapshots.length) {
+          setIsTimelinePlaying(false);
+          return prev;
+        }
+        if (snapshots[next]) {
+          applySnapshot(snapshots[next]);
+        }
+        return next;
+      });
+    }, delayMs);
+
+    return () => {
+      if (playIntervalRef.current) {
+        clearInterval(playIntervalRef.current);
+        playIntervalRef.current = null;
+      }
+    };
+  }, [isTimelinePlaying, speed, snapshots, applySnapshot]);
+
   const handleMaxSlotsChange = useCallback((value: number) => {
     setMaxSlots(value);
     simulatorRef.current = new FragmentationSimulator(value);
@@ -57,13 +219,24 @@ export default function FragmentationPage() {
     setHighlightedPageId(null);
     setScanningPageIds([]);
     setScanKey(null);
+    setTimelineOperations([]);
+    setSnapshots([]);
+    setCurrentTimelineIndex(0);
+    setIsTimelinePlaying(false);
+    setIsTimelineMode(false);
+    snapshotOpIndexRef.current = 0;
   }, [syncFromSimulator]);
 
   const handleReset = useCallback(() => {
     isRunningRef.current = false;
+    setIsTimelinePlaying(false);
     if (animationTimeoutRef.current) {
       clearTimeout(animationTimeoutRef.current);
       animationTimeoutRef.current = null;
+    }
+    if (playIntervalRef.current) {
+      clearInterval(playIntervalRef.current);
+      playIntervalRef.current = null;
     }
     simulatorRef.current = new FragmentationSimulator(maxSlots);
     syncFromSimulator();
@@ -73,6 +246,11 @@ export default function FragmentationPage() {
     setHighlightedPageId(null);
     setScanningPageIds([]);
     setScanKey(null);
+    setTimelineOperations([]);
+    setSnapshots([]);
+    setCurrentTimelineIndex(0);
+    setIsTimelineMode(false);
+    snapshotOpIndexRef.current = 0;
   }, [maxSlots, syncFromSimulator]);
 
   const handlePageDragEnd = useCallback((pageId: string, x: number, y: number) => {
@@ -102,6 +280,11 @@ export default function FragmentationPage() {
     if (isRunningRef.current) return;
     isRunningRef.current = true;
     setIsAnimating(true);
+    setIsTimelineMode(false);
+    setTimelineOperations([]);
+    setSnapshots([]);
+    setCurrentTimelineIndex(0);
+    snapshotOpIndexRef.current = 0;
 
     const sim = simulatorRef.current;
 
@@ -122,6 +305,7 @@ export default function FragmentationPage() {
 
       const frames = sim.insert(key);
 
+      let splitFrame: { sourcePageId: string; newPageId: string } | null = null;
       for (const frame of frames) {
         if (!isRunningRef.current) break;
 
@@ -130,6 +314,7 @@ export default function FragmentationPage() {
           syncFromSimulator();
           await delay(getDelayMs());
         } else if (frame.type === 'split') {
+          splitFrame = { sourcePageId: frame.sourcePageId, newPageId: frame.newPageId };
           setAnimationPhase('splitting');
 
           const sourcePage = sim.pages[frame.sourcePageId];
@@ -218,6 +403,19 @@ export default function FragmentationPage() {
         }
       }
 
+      const pageId = findLeafPageForKey(sim, key);
+      const pageIdx = pageId ? sim.pages[pageId]?.pageIndex : -1;
+      addTimelineOperation('insert', `插入 key=${key} 到页面#${pageIdx}`);
+
+      if (splitFrame) {
+        const sourceIdx = sim.pages[splitFrame.sourcePageId]?.pageIndex;
+        const newIdx = sim.pages[splitFrame.newPageId]?.pageIndex;
+        addTimelineOperation(
+          'split',
+          `页面#${sourceIdx}分裂为#${sourceIdx}和#${newIdx}`
+        );
+      }
+
       setHighlightedPageId(null);
       insertIdx++;
     }
@@ -262,6 +460,9 @@ export default function FragmentationPage() {
         }
       }
 
+      const pageIdx = pageId ? sim.pages[pageId]?.pageIndex : -1;
+      addTimelineOperation('delete', `删除 key=${key} 从页面#${pageIdx}`);
+
       setHighlightedPageId(null);
       deleteIdx++;
     }
@@ -293,13 +494,15 @@ export default function FragmentationPage() {
     setAnimationPhase('complete');
     setCurrentOperation(null);
     setIsAnimating(false);
+    setIsTimelineMode(true);
     syncFromSimulator();
-  }, [syncFromSimulator, speed]);
+  }, [syncFromSimulator, speed, addTimelineOperation]);
 
   const handleReindex = useCallback(async () => {
     if (isRunningRef.current) return;
     isRunningRef.current = true;
     setIsAnimating(true);
+    setIsTimelineMode(false);
 
     const sim = simulatorRef.current;
     const allKeys = sim.getAllLeafKeys();
@@ -519,17 +722,20 @@ export default function FragmentationPage() {
     syncFromSimulator();
     await delay(getDelayMs() * 2);
 
+    addTimelineOperation('reindex', `REINDEX 重建完成 (${allKeys.length}个key)`);
+
     isRunningRef.current = false;
     setAnimationPhase('complete');
     setCurrentOperation('重建完成！');
     setIsAnimating(false);
+    setIsTimelineMode(true);
     syncFromSimulator();
 
     setTimeout(() => {
       setAnimationPhase('idle');
       setCurrentOperation(null);
     }, 2000);
-  }, [maxSlots, syncFromSimulator, speed]);
+  }, [maxSlots, syncFromSimulator, speed, addTimelineOperation]);
 
   useEffect(() => {
     syncFromSimulator();
@@ -537,6 +743,9 @@ export default function FragmentationPage() {
       isRunningRef.current = false;
       if (animationTimeoutRef.current) {
         clearTimeout(animationTimeoutRef.current);
+      }
+      if (playIntervalRef.current) {
+        clearInterval(playIntervalRef.current);
       }
     };
   }, [syncFromSimulator]);
@@ -586,6 +795,7 @@ export default function FragmentationPage() {
               highlightedPageId={highlightedPageId}
               scanningPageIds={scanningPageIds}
               onPageDragEnd={handlePageDragEnd}
+              isAnimated={isTimelineMode}
             />
           </div>
         </div>
@@ -605,6 +815,21 @@ export default function FragmentationPage() {
           onSpeedChange={setSpeed}
           currentOperation={currentOperation}
         />
+        {timelineOperations.length > 0 && (
+          <div className="card p-3">
+            <Timeline
+              operations={timelineOperations}
+              currentIndex={currentTimelineIndex}
+              onIndexChange={handleTimelineIndexChange}
+              isPlaying={isTimelinePlaying}
+              onPlayPause={handlePlayPause}
+              onStepBack={handleStepBack}
+              onStepForward={handleStepForward}
+              speed={speed}
+              disabled={!isTimelineMode}
+            />
+          </div>
+        )}
       </div>
     </div>
   );
