@@ -11,6 +11,30 @@ export interface WALLogEntry {
   isNew: boolean;
   isHighlighted: boolean;
   isScanning: boolean;
+  displayOrder: number;
+}
+
+export type TimeTravelEventType = 'write' | 'checkpoint' | 'crash' | 'recovery';
+
+export interface TimeTravelSnapshot {
+  id: string;
+  type: TimeTravelEventType;
+  timestamp: number;
+  description: string;
+  entries: WALLogEntry[];
+  pages: DataPage[];
+  flushLSN: number;
+  checkpointLSN: number;
+  nextLSN: number;
+  nextPageId: number;
+  hasCrashed: boolean;
+}
+
+export interface TimeTravelMarker {
+  id: string;
+  type: TimeTravelEventType;
+  index: number;
+  description: string;
 }
 
 export interface DataPage {

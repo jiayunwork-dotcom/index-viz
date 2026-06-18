@@ -1,3 +1,4 @@
+import { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { WALLogEntry } from '@/structures/wal/types';
 
@@ -6,6 +7,8 @@ interface WALLogViewProps {
   flushLSN: number;
   checkpointLSN: number;
   onEntryClick: (entry: WALLogEntry) => void;
+  onDragReorder: (dragIndex: number, dropIndex: number) => void;
+  isAnimating: boolean;
 }
 
 const getOperationColor = (operation: string) => {
@@ -36,12 +39,75 @@ export default function WALLogView({
   flushLSN,
   checkpointLSN,
   onEntryClick,
+  onDragReorder,
+  isAnimating,
 }: WALLogViewProps) {
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const listRef = useRef<HTMLDivElement>(null);
+  const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
+
+  const sortedEntries = [...entries].sort((a, b) => a.displayOrder - b.displayOrder);
   const totalLSN = entries.length > 0 ? entries[entries.length - 1].lsn : 0;
   const maxLSN = Math.max(totalLSN, 1);
 
   const flushPosition = totalLSN > 0 ? (flushLSN / maxLSN) * 100 : 0;
   const checkpointPosition = totalLSN > 0 ? (checkpointLSN / maxLSN) * 100 : 0;
+
+  const canDrag = !isAnimating && entries.length > 1;
+
+  const handleDragStart = (index: number, e: React.DragEvent<HTMLDivElement>) => {
+    if (!canDrag) {
+      e.preventDefault();
+      return;
+    }
+    setDraggedIndex(index);
+    setIsDragging(true);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', index.toString());
+
+    const item = itemRefs.current[index];
+    if (item) {
+      const rect = item.getBoundingClientRect();
+      setDragOffset({
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top,
+      });
+    }
+  };
+
+  const handleDragOver = (index: number, e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    if (draggedIndex === null || !canDrag) return;
+
+    const item = itemRefs.current[index];
+    if (!item) return;
+
+    const rect = item.getBoundingClientRect();
+    const midY = rect.top + rect.height / 2;
+    const clientY = 'clientY' in e ? e.clientY : (e as unknown as MouseEvent).clientY;
+    const newDragOverIndex = clientY < midY ? index : index + 1;
+
+    if (newDragOverIndex !== dragOverIndex && newDragOverIndex !== draggedIndex) {
+      setDragOverIndex(newDragOverIndex);
+    }
+  };
+
+  const handleDragEnd = () => {
+    if (draggedIndex !== null && dragOverIndex !== null && draggedIndex !== dragOverIndex) {
+      const dropIndex = dragOverIndex > draggedIndex ? dragOverIndex - 1 : dragOverIndex;
+      onDragReorder(draggedIndex, dropIndex);
+    }
+    setDraggedIndex(null);
+    setDragOverIndex(null);
+    setIsDragging(false);
+  };
+
+  const handleDragLeave = () => {
+    setDragOverIndex(null);
+  };
 
   return (
     <div className="h-full flex flex-col">
@@ -84,59 +150,103 @@ export default function WALLogView({
           <div className="text-[10px] text-slate-400 mt-1">0</div>
         </div>
 
-        <div className="flex-1 min-h-0 overflow-y-auto border border-slate-200 rounded-lg bg-slate-50 p-2 space-y-1.5">
+        <div
+          ref={listRef}
+          className="flex-1 min-h-0 overflow-y-auto border border-slate-200 rounded-lg bg-slate-50 p-2 space-y-1.5 relative"
+          onDragLeave={handleDragLeave}
+          onDragEnd={handleDragEnd}
+        >
           <AnimatePresence initial={false}>
-            {entries.map((entry) => (
-              <motion.div
-                key={entry.id}
-                layout
-                initial={{ opacity: 0, y: 20, scale: 0.95 }}
-                animate={{
-                  opacity: 1,
-                  y: 0,
-                  scale: 1,
-                  backgroundColor: entry.isScanning
-                    ? '#fef3c7'
-                    : undefined,
-                }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                transition={{ duration: 0.3 }}
-                onClick={() => onEntryClick(entry)}
-                className={`
-                  p-2 rounded-lg border cursor-pointer
-                  transition-all duration-200
-                  ${getEntryBgClass(entry)}
-                  ${entry.isHighlighted ? 'ring-2 ring-amber-400 ring-offset-1' : ''}
-                  ${entry.isNew ? 'shadow-lg shadow-amber-200' : 'hover:shadow-md'}
-                  ${entry.isScanning ? 'ring-2 ring-amber-400' : ''}
-                `}
-              >
-                <div className="flex items-center justify-between gap-2 mb-1">
-                  <span className="text-xs font-mono font-bold text-slate-600">
-                    LSN {entry.lsn}
-                  </span>
-                  <span
-                    className={`
-                      text-[10px] px-1.5 py-0.5 rounded border font-medium
-                      ${getOperationColor(entry.operation)}
-                    `}
+            {sortedEntries.map((entry, index) => (
+              <div key={entry.id} className="relative">
+                {dragOverIndex === index && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="border-2 border-dashed border-blue-500 bg-blue-50/50 rounded-lg mb-1.5 h-16 flex items-center justify-center"
                   >
-                    {entry.operation}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-[11px] text-slate-500">
-                  <span>页面 #{entry.pageId}</span>
-                  <span className="truncate max-w-[100px]">{entry.content}</span>
-                </div>
-                {entry.isCheckpointed && (
-                  <div className="mt-1 text-[9px] text-slate-400 flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
-                    已 Checkpoint
-                  </div>
+                    <span className="text-xs text-blue-500 font-medium">释放到此处</span>
+                  </motion.div>
                 )}
-              </motion.div>
+                <motion.div
+                  ref={(el) => {
+                    itemRefs.current[index] = el;
+                  }}
+                  draggable={canDrag}
+                  onDragStart={(e) => handleDragStart(index, e as unknown as React.DragEvent<HTMLDivElement>)}
+                  onDragOver={(e) => handleDragOver(index, e as unknown as React.DragEvent<HTMLDivElement>)}
+                  layout
+                  initial={{ opacity: 0, y: 20, scale: 0.95 }}
+                  animate={{
+                    opacity: draggedIndex === index ? 0.4 : 1,
+                    y: 0,
+                    scale: 1,
+                    backgroundColor: entry.isScanning
+                      ? '#fef3c7'
+                      : undefined,
+                  }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  transition={{ duration: 0.3 }}
+                  onClick={() => onEntryClick(entry)}
+                  className={`
+                    p-2 rounded-lg border
+                    transition-all duration-200
+                    ${getEntryBgClass(entry)}
+                    ${entry.isHighlighted ? 'ring-2 ring-amber-400 ring-offset-1' : ''}
+                    ${entry.isNew ? 'shadow-lg shadow-amber-200' : 'hover:shadow-md'}
+                    ${entry.isScanning ? 'ring-2 ring-amber-400' : ''}
+                    ${canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}
+                    ${draggedIndex === index ? 'opacity-40' : ''}
+                  `}
+                >
+                  {canDrag && (
+                    <div className="absolute left-1 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-400 cursor-grab">
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                        <circle cx="3" cy="3" r="1.5" />
+                        <circle cx="3" cy="9" r="1.5" />
+                        <circle cx="9" cy="3" r="1.5" />
+                        <circle cx="9" cy="9" r="1.5" />
+                      </svg>
+                    </div>
+                  )}
+                  <div className={`flex items-center justify-between gap-2 mb-1 ${canDrag ? 'pl-4' : ''}`}>
+                    <span className="text-xs font-mono font-bold text-slate-600">
+                      LSN {entry.lsn}
+                    </span>
+                    <span
+                      className={`
+                        text-[10px] px-1.5 py-0.5 rounded border font-medium
+                        ${getOperationColor(entry.operation)}
+                      `}
+                    >
+                      {entry.operation}
+                    </span>
+                  </div>
+                  <div className={`flex items-center justify-between text-[11px] text-slate-500 ${canDrag ? 'pl-4' : ''}`}>
+                    <span>页面 #{entry.pageId}</span>
+                    <span className="truncate max-w-[100px]">{entry.content}</span>
+                  </div>
+                  {entry.isCheckpointed && (
+                    <div className={`mt-1 text-[9px] text-slate-400 flex items-center gap-1 ${canDrag ? 'pl-4' : ''}`}>
+                      <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                      已 Checkpoint
+                    </div>
+                  )}
+                </motion.div>
+              </div>
             ))}
           </AnimatePresence>
+          {dragOverIndex === sortedEntries.length && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="border-2 border-dashed border-blue-500 bg-blue-50/50 rounded-lg h-16 flex items-center justify-center"
+            >
+              <span className="text-xs text-blue-500 font-medium">释放到此处</span>
+            </motion.div>
+          )}
 
           {entries.length === 0 && (
             <div className="h-full flex items-center justify-center text-sm text-slate-400">

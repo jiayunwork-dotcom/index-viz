@@ -5,12 +5,14 @@ import WALLogView from '@/components/wal/WALLogView';
 import DataPageView from '@/components/wal/DataPageView';
 import StatsPanel from '@/components/wal/StatsPanel';
 import ControlPanel from '@/components/wal/ControlPanel';
+import TimeTravelTimeline from '@/components/wal/TimeTravelTimeline';
 import type {
   WALLogEntry,
   DataPage,
   AnimationPhase,
   WALStats,
   OperationType,
+  TimeTravelSnapshot,
 } from '@/structures/wal/types';
 import { sleep } from '@/lib/utils';
 
@@ -46,7 +48,24 @@ export default function WALPage() {
   const [showCrashOverlay, setShowCrashOverlay] = useState(false);
   const [hasCrashed, setHasCrashed] = useState(false);
 
+  const [isSingleStepMode, setIsSingleStepMode] = useState(false);
+  const [recoveryProgress, setRecoveryProgress] = useState({ current: 0, total: 0 });
+  const [recoveryState, setRecoveryState] = useState<{
+    entriesToReplay: WALLogEntry[];
+    uniquePageEntries: Map<number, WALLogEntry>;
+    replayIndex: number;
+    phase: 'scan' | 'replay' | 'flush' | 'idle';
+    flushIndex: number;
+    allDirtyForFlush: DataPage[];
+  } | null>(null);
+
+  const [snapshots, setSnapshots] = useState<TimeTravelSnapshot[]>([]);
+  const [currentSnapshotIndex, setCurrentSnapshotIndex] = useState(-1);
+  const [isTimeTraveling, setIsTimeTraveling] = useState(false);
+  const [liveSnapshot, setLiveSnapshot] = useState<TimeTravelSnapshot | null>(null);
+
   const isRunningRef = useRef(false);
+  const snapshotCounterRef = useRef(0);
 
   const stats: WALStats = {
     totalEntries: entries.length,
@@ -69,6 +88,87 @@ export default function WALPage() {
   const getRandomContent = () => {
     return SAMPLE_CONTENTS[Math.floor(Math.random() * SAMPLE_CONTENTS.length)];
   };
+
+  const createSnapshot = useCallback((type: TimeTravelSnapshot['type'], description: string) => {
+    if (isTimeTraveling) return;
+
+    const snapshot: TimeTravelSnapshot = {
+      id: uuidv4(),
+      type,
+      timestamp: Date.now(),
+      description,
+      entries: JSON.parse(JSON.stringify(entries)),
+      pages: JSON.parse(JSON.stringify(pages)),
+      flushLSN,
+      checkpointLSN,
+      nextLSN,
+      nextPageId,
+      hasCrashed,
+    };
+
+    setSnapshots((prev) => [...prev, snapshot]);
+    setCurrentSnapshotIndex((prev) => prev + 1);
+    snapshotCounterRef.current += 1;
+  }, [entries, pages, flushLSN, checkpointLSN, nextLSN, nextPageId, hasCrashed, isTimeTraveling]);
+
+  const handleDragReorder = useCallback((dragIndex: number, dropIndex: number) => {
+    if (isAnimating || isTimeTraveling) return;
+
+    setEntries((prev) => {
+      const sorted = [...prev].sort((a, b) => a.displayOrder - b.displayOrder);
+      const [draggedItem] = sorted.splice(dragIndex, 1);
+      sorted.splice(dropIndex, 0, draggedItem);
+
+      return prev.map((entry) => {
+        const newIndex = sorted.findIndex((e) => e.id === entry.id);
+        return { ...entry, displayOrder: newIndex };
+      });
+    });
+  }, [isAnimating, isTimeTraveling]);
+
+  const handleTimeTravelChange = useCallback((index: number) => {
+    if (index < 0 || index >= snapshots.length) return;
+
+    const snapshot = snapshots[index];
+    setCurrentSnapshotIndex(index);
+
+    if (index === snapshots.length - 1 && liveSnapshot) {
+      setEntries(JSON.parse(JSON.stringify(liveSnapshot.entries)));
+      setPages(JSON.parse(JSON.stringify(liveSnapshot.pages)));
+      setFlushLSN(liveSnapshot.flushLSN);
+      setCheckpointLSN(liveSnapshot.checkpointLSN);
+      setNextLSN(liveSnapshot.nextLSN);
+      setNextPageId(liveSnapshot.nextPageId);
+      setHasCrashed(liveSnapshot.hasCrashed);
+      setIsTimeTraveling(false);
+    } else {
+      setEntries(JSON.parse(JSON.stringify(snapshot.entries)));
+      setPages(JSON.parse(JSON.stringify(snapshot.pages)));
+      setFlushLSN(snapshot.flushLSN);
+      setCheckpointLSN(snapshot.checkpointLSN);
+      setNextLSN(snapshot.nextLSN);
+      setNextPageId(snapshot.nextPageId);
+      setHasCrashed(snapshot.hasCrashed);
+      setIsTimeTraveling(true);
+    }
+  }, [snapshots, liveSnapshot]);
+
+  const saveLiveState = useCallback(() => {
+    const snapshot: TimeTravelSnapshot = {
+      id: uuidv4(),
+      type: 'write',
+      timestamp: Date.now(),
+      description: '当前状态',
+      entries: JSON.parse(JSON.stringify(entries)),
+      pages: JSON.parse(JSON.stringify(pages)),
+      flushLSN,
+      checkpointLSN,
+      nextLSN,
+      nextPageId,
+      hasCrashed,
+    };
+    setLiveSnapshot(snapshot);
+  }, [entries, pages, flushLSN, checkpointLSN, nextLSN, nextPageId, hasCrashed]);
 
   const handleEntryClick = useCallback((entry: WALLogEntry) => {
     setHighlightedEntryId(entry.id);
@@ -167,9 +267,13 @@ export default function WALPage() {
         isNew: true,
         isHighlighted: false,
         isScanning: false,
+        displayOrder: i,
       };
 
-      setEntries((prev) => [...prev, newEntry]);
+      setEntries((prev) => [
+        ...prev.map((e) => ({ ...e, displayOrder: e.displayOrder + 1 })),
+        newEntry,
+      ]);
 
       await sleep(getDelayMs() * 0.4);
 
@@ -224,7 +328,12 @@ export default function WALPage() {
     setTimeout(() => {
       setAnimationPhase('idle');
     }, 500);
-  }, [nextLSN, nextPageId, pages, speed]);
+
+    setTimeout(() => {
+      saveLiveState();
+      createSnapshot('write', `写入 ${WRITE_COUNT} 条数据`);
+    }, 600);
+  }, [nextLSN, nextPageId, pages, speed, createSnapshot, saveLiveState]);
 
   const handleCheckpoint = useCallback(async () => {
     if (isRunningRef.current) return;
@@ -292,7 +401,12 @@ export default function WALPage() {
     setTimeout(() => {
       setAnimationPhase('idle');
     }, 500);
-  }, [pages, entries, speed]);
+
+    setTimeout(() => {
+      saveLiveState();
+      createSnapshot('checkpoint', 'Checkpoint 完成');
+    }, 600);
+  }, [pages, entries, speed, createSnapshot, saveLiveState]);
 
   const handleCrash = useCallback(async () => {
     if (isRunningRef.current) return;
@@ -323,29 +437,68 @@ export default function WALPage() {
     setTimeout(() => {
       setAnimationPhase('idle');
     }, 500);
-  }, [speed]);
 
-  const handleRecovery = useCallback(async () => {
-    if (isRunningRef.current) return;
-    isRunningRef.current = true;
-    setIsAnimating(true);
-    setAnimationPhase('recovery');
+    setTimeout(() => {
+      saveLiveState();
+      createSnapshot('crash', '系统崩溃');
+    }, 600);
+  }, [speed, createSnapshot, saveLiveState]);
 
-    setCurrentOperation('从 Checkpoint 位置开始恢复...');
-    await sleep(getDelayMs() * 0.5);
+  const executeSingleRecoveryStep = useCallback(async (state: NonNullable<typeof recoveryState>) => {
+    const { entriesToReplay, uniquePageEntries, replayIndex, phase, flushIndex, allDirtyForFlush } = state;
 
-    const entriesToReplay = entries.filter((e) => e.lsn > checkpointLSN);
-    const uniquePageEntries = new Map<number, WALLogEntry>();
-    entriesToReplay.forEach((e) => {
-      uniquePageEntries.set(e.pageId, e);
-    });
+    if (phase === 'scan') {
+      if (replayIndex >= entriesToReplay.length) {
+        setEntries((prev) =>
+          prev.map((e) => ({ ...e, isScanning: false }))
+        );
 
-    let replayIndex = 0;
-    for (const entry of entriesToReplay) {
-      if (!isRunningRef.current) break;
+        const dirtyPages = pages.filter((p) => p.isDirty && !p.isOnDisk);
+        const recoveredDirtyPages: DataPage[] = [];
+        for (const entry of entriesToReplay) {
+          const latestEntry = uniquePageEntries.get(entry.pageId);
+          if (latestEntry && latestEntry.id === entry.id) {
+            const existingDiskPage = pages.find(
+              (p) => p.pageId === entry.pageId && p.isOnDisk
+            );
+            if (!existingDiskPage) {
+              recoveredDirtyPages.push({
+                id: uuidv4(),
+                pageId: entry.pageId,
+                content: entry.content,
+                isDirty: true,
+                isOnDisk: false,
+                isFlushing: false,
+                isNew: false,
+                isHighlighted: false,
+                isRecovering: false,
+              });
+            }
+          }
+        }
 
-      replayIndex++;
-      setCurrentOperation(`重放日志 LSN ${entry.lsn} (${replayIndex}/${entriesToReplay.length})`);
+        const newAllDirtyForFlush = [...dirtyPages, ...recoveredDirtyPages].filter(
+          (p, i, arr) => arr.findIndex((x) => x.pageId === p.pageId) === i
+        );
+
+        setCurrentOperation('恢复完成，自动刷盘...');
+        await sleep(getDelayMs() * 0.5);
+
+        if (newAllDirtyForFlush.length === 0) {
+          return { ...state, phase: 'idle' as const };
+        }
+
+        return {
+          ...state,
+          phase: 'flush' as const,
+          flushIndex: 0,
+          allDirtyForFlush: newAllDirtyForFlush,
+        };
+      }
+
+      const entry = entriesToReplay[replayIndex];
+      setCurrentOperation(`重放日志 LSN ${entry.lsn} (${replayIndex + 1}/${entriesToReplay.length})`);
+      setRecoveryProgress({ current: replayIndex + 1, total: entriesToReplay.length });
 
       setEntries((prev) =>
         prev.map((e) => (e.id === entry.id ? { ...e, isScanning: true } : e))
@@ -372,9 +525,6 @@ export default function WALPage() {
             isRecovering: true,
           };
 
-          if (existingDiskPage) {
-            return [...prev, recoveredPage];
-          }
           return [...prev, recoveredPage];
         });
 
@@ -390,48 +540,20 @@ export default function WALPage() {
       }
 
       await sleep(getDelayMs() * 0.2);
+
+      return {
+        ...state,
+        replayIndex: replayIndex + 1,
+      };
     }
 
-    setEntries((prev) =>
-      prev.map((e) => ({ ...e, isScanning: false }))
-    );
-
-    setCurrentOperation('恢复完成，自动刷盘...');
-    await sleep(getDelayMs() * 0.5);
-
-    const dirtyPages = pages.filter((p) => p.isDirty && !p.isOnDisk);
-    const recoveredDirtyPages: DataPage[] = [];
-    for (const entry of entriesToReplay) {
-      const latestEntry = uniquePageEntries.get(entry.pageId);
-      if (latestEntry && latestEntry.id === entry.id) {
-        const existingDiskPage = pages.find(
-          (p) => p.pageId === entry.pageId && p.isOnDisk
-        );
-        if (!existingDiskPage) {
-          recoveredDirtyPages.push({
-            id: uuidv4(),
-            pageId: entry.pageId,
-            content: entry.content,
-            isDirty: true,
-            isOnDisk: false,
-            isFlushing: false,
-            isNew: false,
-            isHighlighted: false,
-            isRecovering: false,
-          });
-        }
+    if (phase === 'flush') {
+      if (flushIndex >= allDirtyForFlush.length) {
+        return { ...state, phase: 'idle' as const };
       }
-    }
 
-    const allDirtyForFlush = [...dirtyPages, ...recoveredDirtyPages].filter(
-      (p, i, arr) => arr.findIndex((x) => x.pageId === p.pageId) === i
-    );
-
-    for (let i = 0; i < allDirtyForFlush.length; i++) {
-      if (!isRunningRef.current) break;
-
-      const page = allDirtyForFlush[i];
-      setCurrentOperation(`恢复刷盘: 页面 #${page.pageId} (${i + 1}/${allDirtyForFlush.length})`);
+      const page = allDirtyForFlush[flushIndex];
+      setCurrentOperation(`恢复刷盘: 页面 #${page.pageId} (${flushIndex + 1}/${allDirtyForFlush.length})`);
 
       setPages((prev) => {
         const pageToFlush = prev.find((p) => p.pageId === page.pageId && !p.isOnDisk);
@@ -468,6 +590,102 @@ export default function WALPage() {
       );
 
       await sleep(getDelayMs() * 0.2);
+
+      return {
+        ...state,
+        flushIndex: flushIndex + 1,
+      };
+    }
+
+    return state;
+  }, [pages, getDelayMs]);
+
+  const handleRecovery = useCallback(async () => {
+    if (isRunningRef.current) return;
+
+    if (isSingleStepMode && recoveryState && recoveryState.phase !== 'idle') {
+      isRunningRef.current = true;
+      setIsAnimating(true);
+      setAnimationPhase('recovery');
+
+      const newState = await executeSingleRecoveryStep(recoveryState);
+      setRecoveryState(newState);
+
+      if (newState.phase === 'idle') {
+        setHasCrashed(false);
+        setCurrentOperation('恢复完成！');
+        await sleep(getDelayMs() * 0.5);
+
+        setCurrentOperation(null);
+        setIsAnimating(false);
+        setAnimationPhase('complete');
+        setRecoveryState(null);
+        setRecoveryProgress({ current: 0, total: 0 });
+        isRunningRef.current = false;
+
+        setTimeout(() => {
+          setAnimationPhase('idle');
+        }, 1000);
+
+        setTimeout(() => {
+          saveLiveState();
+          createSnapshot('recovery', '恢复完成');
+        }, 1100);
+      } else {
+        setIsAnimating(false);
+        isRunningRef.current = false;
+      }
+      return;
+    }
+
+    isRunningRef.current = true;
+    setIsAnimating(true);
+    setAnimationPhase('recovery');
+
+    setCurrentOperation('从 Checkpoint 位置开始恢复...');
+    await sleep(getDelayMs() * 0.5);
+
+    const entriesToReplay = entries.filter((e) => e.lsn > checkpointLSN);
+    const uniquePageEntries = new Map<number, WALLogEntry>();
+    entriesToReplay.forEach((e) => {
+      uniquePageEntries.set(e.pageId, e);
+    });
+
+    const initialState: NonNullable<typeof recoveryState> = {
+      entriesToReplay,
+      uniquePageEntries,
+      replayIndex: 0,
+      phase: 'scan',
+      flushIndex: 0,
+      allDirtyForFlush: [],
+    };
+
+    if (isSingleStepMode) {
+      setRecoveryState(initialState);
+      setRecoveryProgress({ current: 0, total: entriesToReplay.length });
+      const newState = await executeSingleRecoveryStep(initialState);
+      setRecoveryState(newState);
+      setIsAnimating(false);
+      isRunningRef.current = false;
+      return;
+    }
+
+    let currentState = initialState;
+    while (currentState.phase !== 'idle' && isRunningRef.current) {
+      currentState = await executeSingleRecoveryStep(currentState);
+
+      if (!isSingleStepMode) {
+        continue;
+      }
+
+      if (currentState.phase === 'idle') {
+        break;
+      }
+
+      setRecoveryState(currentState);
+      setIsAnimating(false);
+      isRunningRef.current = false;
+      return;
     }
 
     setHasCrashed(false);
@@ -477,12 +695,56 @@ export default function WALPage() {
     setCurrentOperation(null);
     setIsAnimating(false);
     setAnimationPhase('complete');
+    setRecoveryState(null);
+    setRecoveryProgress({ current: 0, total: 0 });
     isRunningRef.current = false;
 
     setTimeout(() => {
       setAnimationPhase('idle');
     }, 1000);
-  }, [entries, checkpointLSN, pages, speed]);
+
+    setTimeout(() => {
+      saveLiveState();
+      createSnapshot('recovery', '恢复完成');
+    }, 1100);
+  }, [entries, checkpointLSN, pages, speed, isSingleStepMode, recoveryState, executeSingleRecoveryStep, createSnapshot, saveLiveState, getDelayMs]);
+
+  const handleSingleStepModeChange = useCallback((enabled: boolean) => {
+    setIsSingleStepMode(enabled);
+
+    if (!enabled && recoveryState && recoveryState.phase !== 'idle') {
+      (async () => {
+        isRunningRef.current = true;
+        setIsAnimating(true);
+        setAnimationPhase('recovery');
+
+        let currentState = recoveryState;
+        while (currentState.phase !== 'idle' && isRunningRef.current) {
+          currentState = await executeSingleRecoveryStep(currentState);
+        }
+
+        setHasCrashed(false);
+        setCurrentOperation('恢复完成！');
+        await sleep(getDelayMs() * 0.5);
+
+        setCurrentOperation(null);
+        setIsAnimating(false);
+        setAnimationPhase('complete');
+        setRecoveryState(null);
+        setRecoveryProgress({ current: 0, total: 0 });
+        isRunningRef.current = false;
+
+        setTimeout(() => {
+          setAnimationPhase('idle');
+        }, 1000);
+
+        setTimeout(() => {
+          saveLiveState();
+          createSnapshot('recovery', '恢复完成');
+        }, 1100);
+      })();
+    }
+  }, [recoveryState, executeSingleRecoveryStep, getDelayMs, createSnapshot, saveLiveState]);
 
   const handleReset = useCallback(() => {
     if (isRunningRef.current) {
@@ -501,6 +763,14 @@ export default function WALPage() {
     setHighlightedPageId(null);
     setShowCrashOverlay(false);
     setHasCrashed(false);
+    setIsSingleStepMode(false);
+    setRecoveryProgress({ current: 0, total: 0 });
+    setRecoveryState(null);
+    setSnapshots([]);
+    setCurrentSnapshotIndex(-1);
+    setIsTimeTraveling(false);
+    setLiveSnapshot(null);
+    snapshotCounterRef.current = 0;
   }, []);
 
   const canCrash =
@@ -509,6 +779,23 @@ export default function WALPage() {
   const canRecovery = hasCrashed && entries.filter((e) => e.lsn > checkpointLSN).length > 0;
 
   useEffect(() => {
+    const initialSnapshot: TimeTravelSnapshot = {
+      id: uuidv4(),
+      type: 'write',
+      timestamp: Date.now(),
+      description: '初始状态',
+      entries: [],
+      pages: [],
+      flushLSN: 0,
+      checkpointLSN: 0,
+      nextLSN: 1,
+      nextPageId: 1,
+      hasCrashed: false,
+    };
+    setSnapshots([initialSnapshot]);
+    setCurrentSnapshotIndex(0);
+    setLiveSnapshot(initialSnapshot);
+
     return () => {
       isRunningRef.current = false;
     };
@@ -572,12 +859,15 @@ export default function WALPage() {
             flushLSN={flushLSN}
             checkpointLSN={checkpointLSN}
             onEntryClick={handleEntryClick}
+            onDragReorder={handleDragReorder}
+            isAnimating={isAnimating || isTimeTraveling}
           />
         </div>
 
         <div className="flex-1 card p-3 flex flex-col min-h-0">
           <DataPageView
             pages={pages}
+            entries={entries}
             onPageClick={handlePageClick}
           />
         </div>
@@ -585,6 +875,14 @@ export default function WALPage() {
 
       <div className="space-y-2">
         <StatsPanel stats={stats} />
+        {snapshots.length > 0 && (
+          <TimeTravelTimeline
+            snapshots={snapshots}
+            currentIndex={currentSnapshotIndex}
+            onTimeChange={handleTimeTravelChange}
+            isTimeTraveling={isTimeTraveling}
+          />
+        )}
         <ControlPanel
           onWrite={handleWrite}
           onCheckpoint={handleCheckpoint}
@@ -598,6 +896,10 @@ export default function WALPage() {
           currentOperation={currentOperation}
           canCrash={canCrash}
           canRecovery={canRecovery}
+          isSingleStepMode={isSingleStepMode}
+          onSingleStepModeChange={handleSingleStepModeChange}
+          recoveryProgress={recoveryProgress}
+          isTimeTraveling={isTimeTraveling}
         />
       </div>
     </div>

@@ -1,8 +1,9 @@
 import { motion, AnimatePresence } from 'framer-motion';
-import type { DataPage } from '@/structures/wal/types';
+import type { DataPage, WALLogEntry } from '@/structures/wal/types';
 
 interface DataPageViewProps {
   pages: DataPage[];
+  entries: WALLogEntry[];
   onPageClick: (page: DataPage) => void;
 }
 
@@ -109,8 +110,21 @@ function PageBlock({ page, onClick, layer, index }: PageBlockProps) {
   );
 }
 
-export default function DataPageView({ pages, onPageClick }: DataPageViewProps) {
-  const bufferPages = pages.filter((p) => p.isDirty && !p.isOnDisk);
+export default function DataPageView({ pages, entries, onPageClick }: DataPageViewProps) {
+  const pageDisplayOrderMap = new Map<number, number>();
+  entries.forEach((entry) => {
+    if (!pageDisplayOrderMap.has(entry.pageId) || entry.displayOrder < pageDisplayOrderMap.get(entry.pageId)!) {
+      pageDisplayOrderMap.set(entry.pageId, entry.displayOrder);
+    }
+  });
+
+  const bufferPages = pages
+    .filter((p) => p.isDirty && !p.isOnDisk)
+    .sort((a, b) => {
+      const orderA = pageDisplayOrderMap.get(a.pageId) ?? Number.MAX_SAFE_INTEGER;
+      const orderB = pageDisplayOrderMap.get(b.pageId) ?? Number.MAX_SAFE_INTEGER;
+      return orderA - orderB;
+    });
   const diskPages = pages.filter((p) => p.isOnDisk);
 
   const bufferHeight = Math.max(
