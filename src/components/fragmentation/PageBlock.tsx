@@ -33,7 +33,7 @@ export default function PageBlock({
       setCurrentX(page.x);
       setCurrentY(page.y);
     }
-  }, [page.x, page.y, isDragging]);
+  }, [page.x, page.y, isDragging, page.id]);
 
   const totalSlots = page.slots.length;
   const halfSplitIndex = Math.floor(totalSlots / 2);
@@ -161,31 +161,54 @@ export default function PageBlock({
   const splitOffsetX = page.splitOffset || 0;
   const isCollapsed = page.isCollapsed === true;
 
+  const effectiveX = isDragging || !isAnimated 
+    ? currentX + blockOffset + splitOffsetX 
+    : page.x + blockOffset + splitOffsetX;
+  const effectiveY = isDragging || !isAnimated 
+    ? currentY 
+    : page.y;
+
+  const getPositionTransition = () => {
+    if (hasSplitAnimation && !isSplitHalf && !isExpanding) {
+      return { duration: 0.6, ease: [0.34, 1.56, 0.64, 1] };
+    }
+    if (isSplitHalf) {
+      return { duration: 0.8, ease: 'easeOut' };
+    }
+    if (isAnimated && !isDragging) {
+      return { duration: 0.3, ease: 'easeOut' };
+    }
+    return { duration: 0 };
+  };
+
+  const getInitialTransform = () => {
+    if (hasSplitAnimation && !isSplitHalf && !isExpanding) {
+      return {
+        x: page.splitFromX! - page.x,
+        y: page.splitFromY! - page.y,
+        scaleX: 0.5,
+        opacity: 0.8,
+      };
+    }
+    if (page.isNew && !isSplitHalf && !isExpanding) {
+      return { scale: 0.8, opacity: 0 };
+    }
+    return false;
+  };
+
   return (
     <motion.div
       className="absolute select-none"
       style={{
-        left: currentX + blockOffset + splitOffsetX,
-        top: currentY,
         width: blockWidth,
         height: PAGE_HEIGHT,
         zIndex: isDragging ? 50 : page.isNew ? 40 : page.isTearing || isSplitHalf || isExpanding ? 45 : 10,
         overflow: 'hidden',
-        transition: isAnimated && !isDragging ? 'left 300ms ease-out, top 300ms ease-out' : 'none',
       }}
-      initial={
-        hasSplitAnimation && !isSplitHalf && !isExpanding
-          ? {
-              x: page.splitFromX! - page.x,
-              y: page.splitFromY! - page.y,
-              scaleX: 0.5,
-              opacity: 0.8,
-            }
-          : page.isNew && !isSplitHalf && !isExpanding
-          ? { scale: 0.8, opacity: 0 }
-          : false
-      }
+      initial={getInitialTransform()}
       animate={{
+        left: effectiveX,
+        top: effectiveY,
         width: blockWidth,
         x: isSplitHalf || isExpanding ? (page.splitHalf === 'right' ? splitOffsetX : 0) : 0,
         y: 0,
@@ -194,11 +217,11 @@ export default function PageBlock({
         opacity: isCollapsed ? 0 : page.isFading ? 0.3 : 1,
       }}
       transition={{
+        left: getPositionTransition(),
+        top: getPositionTransition(),
         width: isExpanding ? { duration: 0.4, ease: 'easeOut' } : { duration: 0 },
         scale: isCollapsed ? { duration: 0.3, ease: 'easeIn' } : { duration: 0.3 },
         opacity: isCollapsed ? { duration: 0.3, ease: 'easeIn' } : { duration: 0.3 },
-        duration: hasSplitAnimation && !isSplitHalf && !isExpanding ? 0.6 : isSplitHalf ? 0.8 : 0.3,
-        ease: hasSplitAnimation && !isSplitHalf && !isExpanding ? [0.34, 1.56, 0.64, 1] : 'easeOut',
       }}
     >
       <motion.div

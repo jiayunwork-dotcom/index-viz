@@ -113,89 +113,100 @@ export default function Timeline({
     }
   };
 
+  const operationCount = operations.length;
+  const isDense = operationCount > 50;
+  const isVeryDense = operationCount > 100;
+
+  const getTickSize = (isReindex: boolean, isSplit: boolean) => {
+    if (isReindex) return isVeryDense ? 10 : 12;
+    if (isSplit) return isVeryDense ? 5 : 6;
+    return isVeryDense ? 4 : isDense ? 5 : 7;
+  };
+
+  const getTickTop = (index: number, isReindex: boolean) => {
+    if (isReindex) return '50%';
+    if (isDense) {
+      return index % 2 === 0 ? '25%' : '75%';
+    }
+    return '50%';
+  };
+
   const renderTickMark = (op: TimelineOperation, index: number) => {
     const pos = getTickPosition(index);
     const isActive = index <= currentIndex;
     const color = getOperationColor(op.type);
     const isReindex = op.type === 'reindex';
+    const isSplit = op.type === 'split';
+    const size = getTickSize(isReindex, isSplit);
+    const top = getTickTop(index, isReindex);
+    const hitAreaSize = Math.max(16, size * 2.5);
 
-    if (isReindex) {
-      return (
-        <div
-          key={op.id}
-          className="absolute cursor-pointer transform -translate-x-1/2 z-20"
-          style={{ left: `${pos}%`, top: '50%', transform: 'translate(-50%, -50%)' }}
-          onMouseEnter={(e) => handleTickHover(op, e)}
-          onMouseLeave={handleTickLeave}
-        >
-          <div
-            style={{
-              width: '12px',
-              height: '12px',
-              backgroundColor: color,
-              transform: 'rotate(45deg)',
-              opacity: isActive ? 1 : 0.4,
-              boxShadow: isActive ? '0 1px 3px rgba(0,0,0,0.3)' : 'none',
-            }}
-          />
-        </div>
-      );
-    }
-
-    if (op.type === 'split') {
-      return (
-        <div
-          key={op.id}
-          className="absolute cursor-pointer transform -translate-x-1/2 z-10"
-          style={{ left: `${pos}%`, top: '50%', transform: 'translate(-50%, -50%)' }}
-          onMouseEnter={(e) => handleTickHover(op, e)}
-          onMouseLeave={handleTickLeave}
-        >
-          <div
-            style={{
-              width: 0,
-              height: 0,
-              borderLeft: '5px solid transparent',
-              borderRight: '5px solid transparent',
-              borderBottom: `8px solid ${color}`,
-              opacity: isActive ? 1 : 0.4,
-              filter: isActive ? 'drop-shadow(0 1px 2px rgba(0,0,0,0.2))' : 'none',
-            }}
-          />
-        </div>
-      );
-    }
+    const tickElement = isReindex ? (
+      <div
+        style={{
+          width: `${size}px`,
+          height: `${size}px`,
+          backgroundColor: color,
+          transform: 'rotate(45deg)',
+          opacity: isActive ? 1 : 0.5,
+          boxShadow: isActive ? '0 1px 3px rgba(0,0,0,0.3)' : 'none',
+        }}
+      />
+    ) : isSplit ? (
+      <div
+        style={{
+          width: 0,
+          height: 0,
+          borderLeft: `${size}px solid transparent`,
+          borderRight: `${size}px solid transparent`,
+          borderBottom: `${Math.floor(size * 1.4)}px solid ${color}`,
+          opacity: isActive ? 1 : 0.5,
+          filter: isActive ? 'drop-shadow(0 1px 2px rgba(0,0,0,0.2))' : 'none',
+        }}
+      />
+    ) : (
+      <div
+        className="rounded-full"
+        style={{
+          width: `${size}px`,
+          height: `${size}px`,
+          backgroundColor: color,
+          opacity: isActive ? 1 : 0.5,
+          boxShadow: isActive ? '0 1px 3px rgba(0,0,0,0.2)' : 'none',
+        }}
+      />
+    );
 
     return (
       <div
         key={op.id}
-        className="absolute cursor-pointer transform -translate-x-1/2 z-10"
-        style={{ left: `${pos}%`, top: '50%', transform: 'translate(-50%, -50%)' }}
+        className="absolute cursor-pointer transform -translate-x-1/2 z-10 flex items-center justify-center"
+        style={{
+          left: `${pos}%`,
+          top,
+          transform: 'translate(-50%, -50%)',
+          width: `${hitAreaSize}px`,
+          height: `${hitAreaSize}px`,
+          zIndex: isReindex ? 20 : 10,
+        }}
         onMouseEnter={(e) => handleTickHover(op, e)}
         onMouseLeave={handleTickLeave}
       >
-        <div
-          className="rounded-full"
-          style={{
-            width: '8px',
-            height: '8px',
-            backgroundColor: color,
-            opacity: isActive ? 1 : 0.4,
-            boxShadow: isActive ? '0 1px 3px rgba(0,0,0,0.2)' : 'none',
-          }}
-        />
+        {tickElement}
       </div>
     );
   };
 
   const cursorPosition = getTickPosition(currentIndex);
 
+  const timelineHeight = isDense ? 32 : 24;
+
   return (
     <div className="flex flex-col gap-2 w-full">
       <div
         ref={trackRef}
-        className={`relative w-full h-5 bg-slate-100 rounded-full select-none ${disabled ? 'cursor-default' : 'cursor-pointer group'}`}
-        style={{ height: '20px' }}
+        className={`relative w-full bg-slate-100 rounded-full select-none ${disabled ? 'cursor-default' : 'cursor-pointer group'}`}
+        style={{ height: `${timelineHeight}px` }}
         onMouseDown={handleMouseDown}
       >
         <div
@@ -207,11 +218,21 @@ export default function Timeline({
 
         <div
           className="absolute top-0 z-30 transform -translate-x-1/2"
-          style={{ left: `${cursorPosition}%` }}
+          style={{ left: `${cursorPosition}%`, height: '100%' }}
         >
           <div className="relative w-0.5 h-full bg-primary-600">
             <div
               className="absolute -top-1.5 left-1/2 transform -translate-x-1/2"
+              style={{
+                width: 0,
+                height: 0,
+                borderLeft: '6px solid transparent',
+                borderRight: '6px solid transparent',
+                borderTop: '6px solid #2563eb',
+              }}
+            />
+            <div
+              className="absolute -bottom-1.5 left-1/2 transform -translate-x-1/2 rotate-180"
               style={{
                 width: 0,
                 height: 0,
