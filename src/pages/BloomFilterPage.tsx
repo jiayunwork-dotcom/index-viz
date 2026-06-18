@@ -3,6 +3,7 @@ import { BloomFilter } from '@/structures/bloom/bloom';
 import { useAnimationStore } from '@/store/animationStore';
 import AnimationControls from '@/components/AnimationControls';
 import BloomCanvas from '@/components/bloom/BloomCanvas';
+import BloomBatchTestPanel from '@/components/bloom/BloomBatchTestPanel';
 
 export default function BloomFilterPage() {
   const [m, setM] = useState(64);
@@ -86,6 +87,12 @@ export default function BloomFilterPage() {
             </div>
             <button onClick={handleClear} className="btn-secondary w-full mt-2">清空</button>
           </div>
+
+          <BloomBatchTestPanel
+            onQuery={(elem) => bf.queryResult(elem)}
+            theoreticalFPR={bf.fpr}
+            insertedElements={bf.elements}
+          />
 
           <div className="card p-4 text-xs text-slate-600 space-y-1.5">
             <p className="font-semibold text-slate-700">说明:</p>

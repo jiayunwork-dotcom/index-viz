@@ -4,6 +4,7 @@ import { useAnimationStore } from '@/store/animationStore';
 import AnimationControls from '@/components/AnimationControls';
 import DataInput from '@/components/DataInput';
 import HashCanvas from '@/components/hash/HashCanvas';
+import ProbePathPanel from '@/components/hash/ProbePathPanel';
 import type { CollisionStrategy, HashMethod } from '@/structures/hash/types';
 
 export default function HashPage() {
@@ -11,29 +12,62 @@ export default function HashPage() {
   const [method, setMethod] = useState<HashMethod>('modulo');
   const [strategy, setStrategy] = useState<CollisionStrategy>('chaining');
   const [table, setTable] = useState(() => new HashTable(8, 'modulo', 'chaining'));
+  const [totalProbeCount, setTotalProbeCount] = useState(0);
+  const [totalOperations, setTotalOperations] = useState(0);
 
   const { frames, currentFrame, setFrames } = useAnimationStore();
 
   useEffect(() => {
     setTable(new HashTable(size, method, strategy));
     setFrames([]);
+    setTotalProbeCount(0);
+    setTotalOperations(0);
   }, [size, method, strategy, setFrames]);
 
   const handleInsert = useCallback(
     (keys: number[]) => {
       const all: any[] = [];
-      keys.forEach((k) => all.push(...table.insert(k)));
-      if (all.length > 0) setFrames(all);
+      let probeSum = 0;
+      let opCount = 0;
+      keys.forEach((k) => {
+        const fs = table.insert(k);
+        all.push(...fs);
+        if (strategy !== 'chaining' && fs.length > 0) {
+          const lastFrame = fs[fs.length - 1];
+          const probePath = lastFrame.data.highlighting?.probePath || [];
+          if (probePath.length > 0) {
+            probeSum += probePath.length;
+            opCount++;
+          }
+        }
+      });
+      if (all.length > 0) {
+        setFrames(all);
+        if (strategy !== 'chaining' && opCount > 0) {
+          setTotalProbeCount((prev) => prev + probeSum);
+          setTotalOperations((prev) => prev + opCount);
+        }
+      }
     },
-    [table, setFrames]
+    [table, setFrames, strategy]
   );
 
   const handleSearch = useCallback(
     (key: number) => {
       const fs = table.search(key);
-      if (fs.length > 0) setFrames(fs);
+      if (fs.length > 0) {
+        setFrames(fs);
+        if (strategy !== 'chaining') {
+          const lastFrame = fs[fs.length - 1];
+          const probePath = lastFrame.data.highlighting?.probePath || [];
+          if (probePath.length > 0) {
+            setTotalProbeCount((prev) => prev + probePath.length);
+            setTotalOperations((prev) => prev + 1);
+          }
+        }
+      }
     },
-    [table, setFrames]
+    [table, setFrames, strategy]
   );
 
   const handleDelete = useCallback(
@@ -47,6 +81,8 @@ export default function HashPage() {
   const handleClear = useCallback(() => {
     setTable(new HashTable(size, method, strategy));
     setFrames([]);
+    setTotalProbeCount(0);
+    setTotalOperations(0);
   }, [size, method, strategy, setFrames]);
 
   const currentFrameData = frames[currentFrame]?.data ?? null;
@@ -85,6 +121,11 @@ export default function HashPage() {
       <div className="flex-1 flex gap-4 min-h-0">
         <aside className="w-72 flex-shrink-0 space-y-4 overflow-y-auto">
           <DataInput onInsert={handleInsert} onSearch={handleSearch} onDelete={handleDelete} onClear={handleClear} />
+          <ProbePathPanel
+            frame={currentFrameData}
+            totalProbeCount={totalProbeCount}
+            totalOperations={totalOperations}
+          />
           <div className="card p-4 space-y-2 text-sm">
             <h3 className="font-semibold text-slate-800">实时统计</h3>
             <div className="grid grid-cols-2 gap-2">

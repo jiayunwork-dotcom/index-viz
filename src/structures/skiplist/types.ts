@@ -18,6 +18,8 @@ export interface SkipListState {
     insertingKey?: number;
     foundNodeId?: string;
     coinFlip?: 'heads' | 'tails' | null;
+    coinResults?: ('heads' | 'tails')[];
+    currentLevel?: number;
     newLevels?: number;
     action?: 'insert' | 'search' | 'delete';
   };

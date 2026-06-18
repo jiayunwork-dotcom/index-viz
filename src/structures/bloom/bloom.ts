@@ -92,6 +92,14 @@ export class BloomFilter {
     return frames;
   }
 
+  queryResult(elem: string): 'maybe' | 'none' {
+    const pos = this.positions(elem);
+    for (const p of pos) {
+      if (!this.bits[p]) return 'none';
+    }
+    return 'maybe';
+  }
+
   get n(): number {
     return this.elements.length;
   }

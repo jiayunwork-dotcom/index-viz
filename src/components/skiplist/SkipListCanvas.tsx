@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { motion } from 'framer-motion';
 import type { SkipListState } from '@/structures/skiplist/types';
 import { cn } from '@/lib/utils';
+import CoinFlipAnimation from './CoinFlipAnimation';
 
 interface Props { frame: SkipListState | null; }
 
@@ -36,12 +37,14 @@ export default function SkipListCanvas({ frame }: Props) {
 
   return (
     <div className="h-full flex gap-4 overflow-hidden">
-      <div className="flex-1 overflow-auto p-4">
+      <div className="flex-1 overflow-auto p-4 relative">
         {highlighting.coinFlip && (
-          <div className="mb-4 inline-flex items-center gap-2 px-4 py-2 bg-yellow-50 border border-yellow-300 rounded-lg">
-            <span className="text-2xl">{highlighting.coinFlip === 'heads' ? '🪙 正面' : '🪙 反面'}</span>
-            <span className="text-sm text-yellow-800">上升到 L{highlighting.newLevels || 1} 层</span>
-          </div>
+          <CoinFlipAnimation
+            coinFlip={highlighting.coinFlip}
+            coinResults={highlighting.coinResults}
+            currentLevel={highlighting.currentLevel}
+            insertingKey={highlighting.insertingKey}
+          />
         )}
 
         <svg width={Math.max(600, layout.width)} height={Math.max(400, layout.height)} className="block">

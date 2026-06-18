@@ -49,8 +49,30 @@ export class SkipList {
 
     frames.push(this.makeFrame(`从高层扫描定位插入位置: ${key}`, { path: [...path], insertingKey: key, action: 'insert' }));
 
-    const newLevel = this.randomLevel();
-    frames.push(this.makeFrame(`抛硬币决定层高: L${newLevel + 1}`, { coinFlip: newLevel > 0 ? 'heads' : 'tails', newLevels: newLevel + 1, insertingKey: key, action: 'insert' }));
+    const coinResults: ('heads' | 'tails')[] = [];
+    let newLevel = 0;
+    
+    while (Math.random() < this.probability && newLevel < this.maxLevel - 1) {
+      coinResults.push('heads');
+      newLevel++;
+      frames.push(this.makeFrame(`第 ${coinResults.length} 次抛硬币: 正面 → 升层到 L${newLevel + 1}`, {
+        coinFlip: 'heads',
+        coinResults: [...coinResults],
+        currentLevel: newLevel,
+        insertingKey: key,
+        action: 'insert',
+      }));
+    }
+    
+    coinResults.push('tails');
+    frames.push(this.makeFrame(`第 ${coinResults.length} 次抛硬币: 反面 → 停止升层, 最终层高 L${newLevel + 1}`, {
+      coinFlip: 'tails',
+      coinResults: [...coinResults],
+      currentLevel: newLevel,
+      newLevels: newLevel + 1,
+      insertingKey: key,
+      action: 'insert',
+    }));
 
     if (newLevel > this.level) {
       for (let i = this.level + 1; i <= newLevel; i++) update[i] = this.head;
@@ -63,7 +85,7 @@ export class SkipList {
       update[i]!.forward[i] = node;
     }
 
-    frames.push(this.makeFrame(`插入 ${key} 完成, 层高 L${newLevel + 1}`, { insertingKey: key, action: 'insert' }));
+    frames.push(this.makeFrame(`插入 ${key} 完成, 层高 L${newLevel + 1}`, { insertingKey: key, action: 'insert', coinResults: [...coinResults] }));
     return frames;
   }
 

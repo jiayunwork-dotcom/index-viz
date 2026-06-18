@@ -4,6 +4,9 @@ import { useAnimationStore } from '@/store/animationStore';
 import AnimationControls from '@/components/AnimationControls';
 import DataInput from '@/components/DataInput';
 import BTreeCanvas from '@/components/btree/BTreeCanvas';
+import OperationHistory from '@/components/OperationHistory';
+import type { OperationRecord } from '@/components/OperationHistory';
+import { uid } from '@/lib/utils';
 
 export default function BTreePage() {
   const [order, setOrder] = useState(4);
@@ -11,32 +14,62 @@ export default function BTreePage() {
   const [tree, setTree] = useState(() => new BTree(4, false));
   const [rangeStart, setRangeStart] = useState('');
   const [rangeEnd, setRangeEnd] = useState('');
+  const [operationHistory, setOperationHistory] = useState<OperationRecord[]>([]);
 
-  const { frames, currentFrame, setFrames } = useAnimationStore();
+  const { frames, currentFrame, setFrames, goToFrame } = useAnimationStore();
 
   useEffect(() => {
     const newTree = new BTree(order, isPlus);
     setTree(newTree);
     setFrames([]);
+    setOperationHistory([]);
   }, [order, isPlus, setFrames]);
 
   const handleInsert = useCallback(
     (keys: number[]) => {
       const allFrames: any[] = [];
+      const newRecords: OperationRecord[] = [];
+      let frameOffset = frames.length;
+
       keys.forEach((k) => {
+        const startFrame = frameOffset;
         const fs = tree.insert(k);
         allFrames.push(...fs);
+        const endFrame = frameOffset + fs.length - 1;
+        newRecords.push({
+          id: uid(),
+          type: 'insert',
+          key: k,
+          startFrame,
+          endFrame,
+          timestamp: Date.now() + k,
+        });
+        frameOffset += fs.length;
       });
+
       setTree(new BTree(order, isPlus));
-      if (allFrames.length > 0) setFrames(allFrames);
+      if (allFrames.length > 0) {
+        setFrames(allFrames);
+        setOperationHistory(newRecords);
+      }
     },
-    [tree, order, isPlus, setFrames]
+    [tree, order, isPlus, setFrames, frames.length]
   );
 
   const handleSearch = useCallback(
     (key: number) => {
       const fs = tree.search(key);
-      if (fs.length > 0) setFrames(fs);
+      if (fs.length > 0) {
+        setFrames(fs);
+        setOperationHistory([{
+          id: uid(),
+          type: 'search',
+          key,
+          startFrame: 0,
+          endFrame: fs.length - 1,
+          timestamp: Date.now(),
+        }]);
+      }
     },
     [tree, setFrames]
   );
@@ -44,7 +77,17 @@ export default function BTreePage() {
   const handleDelete = useCallback(
     (key: number) => {
       const fs = tree.delete(key);
-      if (fs.length > 0) setFrames(fs);
+      if (fs.length > 0) {
+        setFrames(fs);
+        setOperationHistory([{
+          id: uid(),
+          type: 'delete',
+          key,
+          startFrame: 0,
+          endFrame: fs.length - 1,
+          timestamp: Date.now(),
+        }]);
+      }
     },
     [tree, setFrames]
   );
@@ -60,6 +103,7 @@ export default function BTreePage() {
   const handleClear = useCallback(() => {
     setTree(new BTree(order, isPlus));
     setFrames([]);
+    setOperationHistory([]);
   }, [order, isPlus, setFrames]);
 
   const currentFrameData = frames[currentFrame]?.data ?? null;
@@ -144,6 +188,11 @@ export default function BTreePage() {
             <BTreeCanvas frame={currentFrameData} />
           </div>
           <AnimationControls />
+          <OperationHistory
+            records={operationHistory}
+            currentFrame={currentFrame}
+            onJump={goToFrame}
+          />
         </div>
       </div>
     </div>
