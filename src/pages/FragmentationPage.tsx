@@ -176,21 +176,41 @@ export default function FragmentationPage() {
             setPages({ ...sim.pages });
             await delay(getDelayMs() * 0.3);
 
+            sourcePage.isExpanding = true;
+            sourcePage.expandProgress = 0;
+            newPage.isExpanding = true;
+            newPage.expandProgress = 0;
+            setPages({ ...sim.pages });
+
+            const expandSteps = 8;
+            for (let i = 1; i <= expandSteps; i++) {
+              if (!isRunningRef.current) break;
+              const progress = i / expandSteps;
+              sourcePage.expandProgress = progress;
+              newPage.expandProgress = progress;
+              setPages({ ...sim.pages });
+              await delay(getDelayMs() * 0.06);
+            }
+
             sourcePage.splitHalf = 'full';
             sourcePage.splitOffset = undefined;
             sourcePage.splitOriginX = undefined;
             sourcePage.splitOriginY = undefined;
+            sourcePage.isExpanding = undefined;
+            sourcePage.expandProgress = undefined;
 
             newPage.splitHalf = 'full';
             newPage.splitOffset = undefined;
             newPage.splitOriginX = undefined;
             newPage.splitOriginY = undefined;
+            newPage.isExpanding = undefined;
+            newPage.expandProgress = undefined;
             newPage.splitFromX = undefined;
             newPage.splitFromY = undefined;
             newPage.splitDirection = undefined;
 
             setPages({ ...sim.pages });
-            await delay(getDelayMs() * 0.5);
+            await delay(getDelayMs() * 0.3);
           }
 
           syncFromSimulator();
@@ -244,6 +264,29 @@ export default function FragmentationPage() {
 
       setHighlightedPageId(null);
       deleteIdx++;
+    }
+
+    const deletedSlots: { pageId: string; slotIdx: number }[] = [];
+    Object.entries(sim.pages).forEach(([pageId, page]) => {
+      page.slots.forEach((slot, slotIdx) => {
+        if (slot.status === 'deleted') {
+          deletedSlots.push({ pageId, slotIdx });
+        }
+      });
+    });
+
+    setAnimationPhase('deleting');
+    setCurrentOperation(`整理已删除空间: 共 ${deletedSlots.length} 个`);
+
+    for (let i = 0; i < deletedSlots.length; i++) {
+      if (!isRunningRef.current) break;
+      const { pageId, slotIdx } = deletedSlots[i];
+      const page = sim.pages[pageId];
+      if (page && page.slots[slotIdx]) {
+        page.slots[slotIdx].isCollapsed = true;
+        setPages({ ...sim.pages });
+        await delay(Math.max(20, getDelayMs() * 0.15));
+      }
     }
 
     isRunningRef.current = false;

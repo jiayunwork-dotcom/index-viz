@@ -87,6 +87,9 @@ export default function PageBlock({
   };
 
   const getSlotBgColor = (slot: Slot) => {
+    if (slot.isCollapsed) {
+      return '#f1f5f9';
+    }
     switch (slot.status) {
       case 'used':
         return '#10b981';
@@ -103,10 +106,58 @@ export default function PageBlock({
 
   const hasSplitAnimation = page.isNew && page.splitFromX !== undefined && page.splitFromY !== undefined;
   const isSplitHalf = page.splitHalf === 'left' || page.splitHalf === 'right';
+  const isExpanding = page.isExpanding === true;
+  const expandProgress = page.expandProgress || 0;
 
-  const blockWidth = isSplitHalf ? PAGE_WIDTH / 2 : PAGE_WIDTH;
-  const blockOffset = page.splitHalf === 'right' ? PAGE_WIDTH / 2 : 0;
+  let blockWidth: number;
+  let blockOffset: number;
+  let innerWidth: string | number;
+  let innerMarginLeft: number;
+
+  if (isExpanding) {
+    const progress = Math.max(0, Math.min(1, expandProgress));
+    if (page.splitHalf === 'left') {
+      blockWidth = PAGE_WIDTH / 2 + (PAGE_WIDTH / 2) * progress;
+      blockOffset = 0;
+      innerWidth = PAGE_WIDTH;
+      innerMarginLeft = 0;
+    } else if (page.splitHalf === 'right') {
+      blockWidth = PAGE_WIDTH / 2 + (PAGE_WIDTH / 2) * progress;
+      blockOffset = PAGE_WIDTH / 2 - (PAGE_WIDTH / 2) * progress;
+      innerWidth = PAGE_WIDTH;
+      innerMarginLeft = -PAGE_WIDTH / 2 + (PAGE_WIDTH / 2) * progress;
+    } else {
+      blockWidth = PAGE_WIDTH;
+      blockOffset = 0;
+      innerWidth = '100%';
+      innerMarginLeft = 0;
+    }
+  } else if (isSplitHalf) {
+    blockWidth = PAGE_WIDTH / 2;
+    blockOffset = page.splitHalf === 'right' ? PAGE_WIDTH / 2 : 0;
+    innerWidth = PAGE_WIDTH;
+    innerMarginLeft = page.splitHalf === 'right' ? -PAGE_WIDTH / 2 : 0;
+  } else {
+    blockWidth = PAGE_WIDTH;
+    blockOffset = 0;
+    innerWidth = '100%';
+    innerMarginLeft = 0;
+  }
+
+  const getGridCols = (totalSlots: number): number => {
+    if (totalSlots <= 4) return 2;
+    if (totalSlots <= 6) return 3;
+    if (totalSlots <= 8) return 3;
+    if (totalSlots <= 9) return 3;
+    if (totalSlots <= 12) return 4;
+    return 4;
+  };
+
+  const visibleSlotCount = visibleSlots.length;
+  const gridCols = getGridCols(visibleSlotCount);
+
   const splitOffsetX = page.splitOffset || 0;
+  const isCollapsed = page.isCollapsed === true;
 
   return (
     <motion.div
@@ -116,43 +167,47 @@ export default function PageBlock({
         top: currentY,
         width: blockWidth,
         height: PAGE_HEIGHT,
-        zIndex: isDragging ? 50 : page.isNew ? 40 : page.isTearing || isSplitHalf ? 45 : 10,
+        zIndex: isDragging ? 50 : page.isNew ? 40 : page.isTearing || isSplitHalf || isExpanding ? 45 : 10,
         overflow: 'hidden',
       }}
       initial={
-        hasSplitAnimation && !isSplitHalf
+        hasSplitAnimation && !isSplitHalf && !isExpanding
           ? {
               x: page.splitFromX! - page.x,
               y: page.splitFromY! - page.y,
               scaleX: 0.5,
               opacity: 0.8,
             }
-          : page.isNew && !isSplitHalf
+          : page.isNew && !isSplitHalf && !isExpanding
           ? { scale: 0.8, opacity: 0 }
-          : isSplitHalf
-          ? {
-              x: 0,
-              scaleX: 1,
-              opacity: 1,
-            }
           : false
       }
       animate={{
-        x: isSplitHalf ? (page.splitHalf === 'right' ? splitOffsetX : 0) : 0,
+        width: blockWidth,
+        x: isSplitHalf || isExpanding ? (page.splitHalf === 'right' ? splitOffsetX : 0) : 0,
         y: 0,
-        scaleX: isSplitHalf ? 1 : 1,
-        scale: 1,
-        opacity: page.isFading ? 0.3 : 1,
+        scaleX: 1,
+        scale: isCollapsed ? 0 : 1,
+        opacity: isCollapsed ? 0 : page.isFading ? 0.3 : 1,
       }}
       transition={{
-        duration: hasSplitAnimation && !isSplitHalf ? 0.6 : isSplitHalf ? 0.8 : 0.3,
-        ease: hasSplitAnimation && !isSplitHalf ? [0.34, 1.56, 0.64, 1] : 'easeOut',
+        width: isExpanding ? { duration: 0.4, ease: 'easeOut' } : { duration: 0 },
+        scale: isCollapsed ? { duration: 0.3, ease: 'easeIn' } : { duration: 0.3 },
+        opacity: isCollapsed ? { duration: 0.3, ease: 'easeIn' } : { duration: 0.3 },
+        duration: hasSplitAnimation && !isSplitHalf && !isExpanding ? 0.6 : isSplitHalf ? 0.8 : 0.3,
+        ease: hasSplitAnimation && !isSplitHalf && !isExpanding ? [0.34, 1.56, 0.64, 1] : 'easeOut',
       }}
     >
-      <div
+      <motion.div
         style={{
-          width: isSplitHalf ? PAGE_WIDTH : '100%',
-          marginLeft: page.splitHalf === 'right' ? -PAGE_WIDTH / 2 : 0,
+          width: innerWidth,
+          marginLeft: innerMarginLeft,
+        }}
+        animate={{
+          marginLeft: innerMarginLeft,
+        }}
+        transition={{
+          marginLeft: isExpanding ? { duration: 0.4, ease: 'easeOut' } : { duration: 0 },
         }}
         className={`
           h-full rounded-lg border-2 cursor-move
@@ -200,10 +255,13 @@ export default function PageBlock({
         </div>
 
         <div className="flex-1 p-1.5 grid gap-1" style={{
-          gridTemplateColumns: `repeat(${Math.ceil(Math.sqrt(page.maxSlots))}, 1fr)`,
+          gridTemplateColumns: `repeat(${gridCols}, 1fr)`,
         }}>
           {visibleSlots.map((slot, idx) => {
             const actualIdx = page.splitHalf === 'right' ? idx + halfSplitIndex : idx;
+            const isSlotCollapsed = slot.isCollapsed === true;
+            const isSlotDeleted = slot.status === 'deleted';
+
             return (
               <motion.div
                 key={actualIdx}
@@ -211,11 +269,19 @@ export default function PageBlock({
                 style={{ height: SLOT_HEIGHT }}
                 animate={{
                   backgroundColor: getSlotBgColor(slot),
+                  scale: isSlotCollapsed ? 0.6 : 1,
+                  opacity: isSlotCollapsed ? 0.4 : 1,
+                  borderWidth: isSlotDeleted && !isSlotCollapsed ? 2 : 0,
+                  borderColor: isSlotDeleted && !isSlotCollapsed ? '#dc2626' : 'transparent',
+                  borderStyle: 'solid',
                 }}
-                transition={{ duration: 0.4, ease: 'easeInOut' }}
+                transition={{
+                  duration: 0.4,
+                  ease: 'easeInOut',
+                }}
               >
                 <AnimatePresence>
-                  {(slot.status === 'deleted' || slot.status === 'deleting') && (
+                  {(slot.status === 'deleted' || slot.status === 'deleting') && !isSlotCollapsed && (
                     <motion.div
                       className="absolute inset-0 z-10"
                       initial={{ opacity: 0 }}
@@ -249,10 +315,20 @@ export default function PageBlock({
                     {slot.key}
                   </motion.span>
                 )}
-                {slot.status === 'deleted' && slot.key !== null && (
+                {slot.status === 'deleted' && slot.key !== null && !isSlotCollapsed && (
                   <span className="text-white text-[10px] font-medium z-10 line-through">
                     {slot.key}
                   </span>
+                )}
+                {isSlotCollapsed && (
+                  <motion.div
+                    className="absolute inset-0 flex items-center justify-center"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: 0.2 }}
+                  >
+                    <div className="w-2 h-2 rounded-full bg-slate-300" />
+                  </motion.div>
                 )}
               </motion.div>
             );
@@ -271,7 +347,7 @@ export default function PageBlock({
             {fillRate.toFixed(0)}% 填充
           </div>
         </div>
-      </div>
+      </motion.div>
     </motion.div>
   );
 }

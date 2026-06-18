@@ -4,6 +4,7 @@ export interface Slot {
   key: number | null;
   status: SlotStatus;
   isAnimating?: boolean;
+  isCollapsed?: boolean;
 }
 
 export interface PhysicalPage {
@@ -27,6 +28,9 @@ export interface PhysicalPage {
   splitWidthScale?: number;
   splitOriginX?: number;
   splitOriginY?: number;
+  isExpanding?: boolean;
+  expandProgress?: number;
+  isCollapsed?: boolean;
 }
 
 export interface LogicalNode {
