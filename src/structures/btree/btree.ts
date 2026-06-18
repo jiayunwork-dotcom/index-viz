@@ -68,7 +68,12 @@ export class BTree {
       right.children = node.children.slice(mid + 1);
     }
 
-    frames.push(this.mkFrame('节点闪烁变红 - 中间 key 高亮', upKey, node.id, 'splitting'));
+    frames.push(this.makeFrame('节点闪烁变红 - 中间 key 高亮', {
+      insertingKey: upKey,
+      nodeId: node.id,
+      type: 'splitting',
+      splitInfo: { leftId: left.id, rightId: right.id, upKey },
+    }));
 
     const parentIdx = path.indexOf(node) - 1;
     if (parentIdx >= 0) {

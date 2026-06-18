@@ -33,13 +33,19 @@ const K_H = 34;
 const K_GAP = 4;
 const PAD_X = 10;
 const PAD_Y = 8;
-const LV_GAP = 110;
+const LV_GAP = 120;
 const ND_GAP = 60;
-const SIBLING_GAP = 50;
+const SIBLING_GAP = 70;
+const SUBTREE_GAP = 30;
 
 function nodeW(nKeys: number): number {
   const c = Math.max(nKeys, 1);
   return PAD_X * 2 + c * K_W + (c - 1) * K_GAP;
+}
+
+interface Contour {
+  left: number[];
+  right: number[];
 }
 
 function layoutTree(
@@ -48,79 +54,135 @@ function layoutTree(
 ): LaidOutNode[] {
   if (!rootId || !nodes[rootId]) return [];
   const result: LaidOutNode[] = [];
+  const nodeData: Record<string, { x: number; y: number; width: number; centerX: number; contour: Contour; depth: number }> = {};
 
-  const layout = (id: string, depth: number, startX: number): { width: number; centerX: number } => {
+  const mergeContours = (childContours: Contour[], gaps: number[]): Contour => {
+    if (childContours.length === 0) return { left: [], right: [] };
+    
+    const maxDepth = Math.max(...childContours.map(c => Math.max(c.left.length, c.right.length)));
+    const left: number[] = [];
+    const right: number[] = [];
+    
+    for (let d = 0; d < maxDepth; d++) {
+      let minL = Infinity;
+      let maxR = -Infinity;
+      for (let i = 0; i < childContours.length; i++) {
+        const cc = childContours[i];
+        const gap = gaps[i] || 0;
+        if (cc.left[d] !== undefined) minL = Math.min(minL, cc.left[d] + gap);
+        if (cc.right[d] !== undefined) maxR = Math.max(maxR, cc.right[d] + gap);
+      }
+      left.push(minL === Infinity ? 0 : minL);
+      right.push(maxR === -Infinity ? 0 : maxR);
+    }
+    return { left, right };
+  };
+
+  const layout = (id: string, depth: number): { centerX: number; contour: Contour } => {
     const nd = nodes[id];
-    if (!nd) return { width: 0, centerX: 0 };
+    if (!nd) return { centerX: 0, contour: { left: [], right: [] } };
 
     const selfW = nodeW(nd.keys.length);
     const y = depth * (K_H + PAD_Y * 2 + LV_GAP) + 30;
+    const nodeH = K_H + PAD_Y * 2;
 
     if (nd.children.length === 0) {
-      const nodeObj: LaidOutNode = {
-        ...nd,
-        x: startX,
-        y,
-        width: selfW,
-        centerX: startX + selfW / 2,
-        subtreeWidth: selfW,
+      const contour: Contour = {
+        left: [-selfW / 2],
+        right: [selfW / 2],
       };
-      result.push(nodeObj);
-      return { width: selfW, centerX: startX + selfW / 2 };
+      nodeData[id] = { x: 0, y, width: selfW, centerX: 0, contour, depth };
+      return { centerX: 0, contour };
     }
 
-    let childTotalW = 0;
-    const childCenters: number[] = [];
+    const childResults: { centerX: number; contour: Contour; id: string; width: number }[] = [];
+    const childGaps: number[] = [0];
+    let currentX = 0;
 
-    nd.children.forEach((cid, i) => {
-      const childStartX = startX + childTotalW + (i > 0 ? SIBLING_GAP : 0);
-      if (i > 0) childTotalW += SIBLING_GAP;
-      const cr = layout(cid, depth + 1, childStartX);
-      childCenters.push(cr.centerX);
-      childTotalW += cr.width;
-    });
-
-    const firstC = childCenters[0];
-    const lastC = childCenters[childCenters.length - 1];
-    const childrenCx = (firstC + lastC) / 2;
-    const subtreeW = Math.max(selfW, childTotalW);
-
-    const shift = (subtreeW - childTotalW) / 2;
-    if (shift > 0) {
-      nd.children.forEach((cid) => shiftSubtree(cid, shift, depth + 1, result));
+    for (let i = 0; i < nd.children.length; i++) {
+      const cid = nd.children[i];
+      const cr = layout(cid, depth + 1);
+      const childNd = nodes[cid];
+      const childW = nodeW(childNd ? childNd.keys.length : 1);
+      
+      if (i > 0) {
+        const prev = childResults[i - 1];
+        const checkDepth = Math.min(prev.contour.right.length, cr.contour.left.length);
+        let maxOverlap = 0;
+        for (let d = 0; d < checkDepth; d++) {
+          const prevRight = prev.contour.right[d] + childGaps[i - 1];
+          const currLeft = cr.contour.left[d];
+          const overlap = prevRight + SIBLING_GAP - currLeft;
+          if (overlap > maxOverlap) maxOverlap = overlap;
+        }
+        if (maxOverlap > 0) {
+          const shift = maxOverlap + SUBTREE_GAP;
+          currentX += shift;
+        } else {
+          currentX += SIBLING_GAP;
+        }
+      }
+      
+      childGaps.push(currentX);
+      childResults.push({ centerX: cr.centerX + currentX, contour: cr.contour, id: cid, width: childW });
     }
 
-    const selfCx = childrenCx + shift;
+    const firstChild = childResults[0];
+    const lastChild = childResults[childResults.length - 1];
+    const childrenCenter = (firstChild.centerX + lastChild.centerX) / 2;
+    const selfCenterX = 0;
+    const shift = selfCenterX - childrenCenter;
 
-    const nodeObj: LaidOutNode = {
-      ...nd,
-      x: selfCx - selfW / 2,
-      y,
-      width: selfW,
-      centerX: selfCx,
-      subtreeWidth: subtreeW,
+    for (let i = 0; i < childResults.length; i++) {
+      const cr = childResults[i];
+      const newX = cr.centerX + shift;
+      const shiftedContour: Contour = {
+        left: cr.contour.left.map(v => v + newX),
+        right: cr.contour.right.map(v => v + newX),
+      };
+      nodeData[cr.id].centerX = newX;
+      nodeData[cr.id].x = newX - nodeData[cr.id].width / 2;
+      nodeData[cr.id].contour = shiftedContour;
+      for (let d = 0; d < shiftedContour.left.length; d++) {
+        shiftedContour.left[d] -= selfCenterX;
+        shiftedContour.right[d] -= selfCenterX;
+      }
+      childResults[i] = { ...cr, centerX: newX, contour: shiftedContour };
+    }
+
+    const childContours = childResults.map(cr => cr.contour);
+    const gapsForMerge = childResults.map((_, i) => 0);
+    const mergedContour = mergeContours(childContours, gapsForMerge);
+    
+    const selfLeft = -selfW / 2;
+    const selfRight = selfW / 2;
+    const finalContour: Contour = {
+      left: [selfLeft, ...mergedContour.left],
+      right: [selfRight, ...mergedContour.right],
     };
-    result.push(nodeObj);
 
-    return { width: subtreeW, centerX: selfCx };
+    nodeData[id] = { x: -selfW / 2, y, width: selfW, centerX: 0, contour: finalContour, depth };
+    return { centerX: 0, contour: finalContour };
   };
 
-  const shiftSubtree = (id: string, delta: number, depth: number, list: LaidOutNode[]) => {
-    const nd = list.find((n) => n.id === id);
-    if (!nd) return;
-    nd.x += delta;
-    nd.centerX += delta;
-    nd.children.forEach((cid) => shiftSubtree(cid, delta, depth + 1, list));
-  };
-
-  layout(rootId, 0, 50);
+  layout(rootId, 0);
 
   let minX = Infinity;
-  result.forEach((n) => { minX = Math.min(minX, n.x); });
-  if (minX < 20) {
-    const off = 20 - minX;
-    result.forEach((n) => { n.x += off; n.centerX += off; });
-  }
+  Object.values(nodeData).forEach((nd) => { minX = Math.min(minX, nd.x); });
+  const xOffset = minX < 20 ? 20 - minX : 50;
+  
+  Object.keys(nodeData).forEach((id) => {
+    const nd = nodeData[id];
+    const laid: LaidOutNode = {
+      ...nodes[id],
+      x: nd.x + xOffset,
+      y: nd.y,
+      width: nd.width,
+      centerX: nd.centerX + xOffset,
+      subtreeWidth: nd.contour.right[0] - nd.contour.left[0],
+    };
+    result.push(laid);
+  });
 
   return result;
 }
@@ -156,8 +218,18 @@ export default function BTreeCanvas({ frame }: BTreeCanvasProps) {
       maxY = Math.max(maxY, n.y + nodeH + 40);
     });
     const hl: Record<string, HighlightType> = {};
-    if (frame.type && frame.nodeId) hl[frame.nodeId] = frame.type;
-    if (frame.path) frame.path.forEach((p) => { if (!hl[p]) hl[p] = 'searching'; });
+    if (frame.type && frame.nodeId && frame.nodes[frame.nodeId]) {
+      hl[frame.nodeId] = frame.type;
+    }
+    if (frame.type === 'splitting' && frame.splitInfo) {
+      if (frame.nodes[frame.splitInfo.leftId]) hl[frame.splitInfo.leftId] = 'splitting';
+      if (frame.nodes[frame.splitInfo.rightId]) hl[frame.splitInfo.rightId] = 'splitting';
+    }
+    if (frame.type === 'inserting' && frame.splitInfo) {
+      if (frame.nodes[frame.splitInfo.leftId]) hl[frame.splitInfo.leftId] = 'inserting';
+      if (frame.nodes[frame.splitInfo.rightId]) hl[frame.splitInfo.rightId] = 'inserting';
+    }
+    if (frame.path) frame.path.forEach((p) => { if (frame.nodes[p] && !hl[p]) hl[p] = 'searching'; });
     const nm: Record<string, LaidOutNode> = {};
     laid.forEach((n) => { nm[n.id] = n; });
     return { laidOut: laid, bounds: { w: maxX, h: maxY }, highlights: hl, nodeMap: nm };
@@ -179,30 +251,44 @@ export default function BTreeCanvas({ frame }: BTreeCanvasProps) {
   const svgH = Math.max(400, bounds.h);
 
   const splitNode = frame.type === 'splitting' && frame.nodeId ? nodeMap[frame.nodeId] : null;
-
   const hasSplitInfo = frame.splitInfo != null && frame.insertingKey != null;
-  const showUpKey = (frame.type === 'splitting' && splitNode != null) || hasSplitInfo;
-
+  
   let upKeyStartY = 100;
   let upKeyX = 100;
   let upKeyEndY = 40;
   let upKeyEndX = 100;
+  let hasValidUpKeyCoords = false;
 
-  if (splitNode) {
+  if (splitNode && typeof splitNode.y === 'number' && typeof splitNode.centerX === 'number') {
     upKeyStartY = splitNode.y + nodeH / 2;
     upKeyX = splitNode.centerX;
     upKeyEndY = splitNode.y - 32;
     upKeyEndX = splitNode.centerX;
+    hasValidUpKeyCoords = true;
   } else if (hasSplitInfo) {
     const left = nodeMap[frame.splitInfo!.leftId];
     const right = nodeMap[frame.splitInfo!.rightId];
-    if (left && right) {
+    if (left && right && 
+        typeof left.y === 'number' && typeof left.centerX === 'number' &&
+        typeof right.y === 'number' && typeof right.centerX === 'number') {
       upKeyStartY = (left.y + right.y) / 2;
       upKeyX = (left.centerX + right.centerX) / 2;
       upKeyEndY = Math.min(left.y, right.y) - LV_GAP / 2;
       upKeyEndX = upKeyX;
+      hasValidUpKeyCoords = true;
+    } else if (frame.nodeId && nodeMap[frame.nodeId]) {
+      const node = nodeMap[frame.nodeId];
+      if (typeof node.y === 'number' && typeof node.centerX === 'number') {
+        upKeyStartY = node.y + nodeH / 2;
+        upKeyX = node.centerX;
+        upKeyEndY = node.y - 32;
+        upKeyEndX = node.centerX;
+        hasValidUpKeyCoords = true;
+      }
     }
   }
+
+  const showUpKey = hasValidUpKeyCoords && frame.insertingKey != null;
 
   return (
     <div className="relative h-full overflow-auto bg-gradient-to-b from-slate-50 to-white">
