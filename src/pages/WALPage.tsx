@@ -66,6 +66,39 @@ export default function WALPage() {
 
   const isRunningRef = useRef(false);
   const snapshotCounterRef = useRef(0);
+  const latestEntriesRef = useRef<WALLogEntry[]>([]);
+  const latestPagesRef = useRef<DataPage[]>([]);
+  const latestFlushLSNRef = useRef(0);
+  const latestCheckpointLSNRef = useRef(0);
+  const latestNextLSNRef = useRef(1);
+  const latestNextPageIdRef = useRef(1);
+  const latestHasCrashedRef = useRef(false);
+  const isTimeTravelingRef = useRef(false);
+
+  useEffect(() => {
+    latestEntriesRef.current = entries;
+  }, [entries]);
+  useEffect(() => {
+    latestPagesRef.current = pages;
+  }, [pages]);
+  useEffect(() => {
+    latestFlushLSNRef.current = flushLSN;
+  }, [flushLSN]);
+  useEffect(() => {
+    latestCheckpointLSNRef.current = checkpointLSN;
+  }, [checkpointLSN]);
+  useEffect(() => {
+    latestNextLSNRef.current = nextLSN;
+  }, [nextLSN]);
+  useEffect(() => {
+    latestNextPageIdRef.current = nextPageId;
+  }, [nextPageId]);
+  useEffect(() => {
+    latestHasCrashedRef.current = hasCrashed;
+  }, [hasCrashed]);
+  useEffect(() => {
+    isTimeTravelingRef.current = isTimeTraveling;
+  }, [isTimeTraveling]);
 
   const stats: WALStats = {
     totalEntries: entries.length,
@@ -90,29 +123,29 @@ export default function WALPage() {
   };
 
   const createSnapshot = useCallback((type: TimeTravelSnapshot['type'], description: string) => {
-    if (isTimeTraveling) return;
+    if (isTimeTravelingRef.current) return;
 
     const snapshot: TimeTravelSnapshot = {
       id: uuidv4(),
       type,
       timestamp: Date.now(),
       description,
-      entries: JSON.parse(JSON.stringify(entries)),
-      pages: JSON.parse(JSON.stringify(pages)),
-      flushLSN,
-      checkpointLSN,
-      nextLSN,
-      nextPageId,
-      hasCrashed,
+      entries: JSON.parse(JSON.stringify(latestEntriesRef.current)),
+      pages: JSON.parse(JSON.stringify(latestPagesRef.current)),
+      flushLSN: latestFlushLSNRef.current,
+      checkpointLSN: latestCheckpointLSNRef.current,
+      nextLSN: latestNextLSNRef.current,
+      nextPageId: latestNextPageIdRef.current,
+      hasCrashed: latestHasCrashedRef.current,
     };
 
     setSnapshots((prev) => [...prev, snapshot]);
     setCurrentSnapshotIndex((prev) => prev + 1);
     snapshotCounterRef.current += 1;
-  }, [entries, pages, flushLSN, checkpointLSN, nextLSN, nextPageId, hasCrashed, isTimeTraveling]);
+  }, []);
 
   const handleDragReorder = useCallback((dragIndex: number, dropIndex: number) => {
-    if (isAnimating || isTimeTraveling) return;
+    if (isAnimating || isTimeTravelingRef.current) return;
 
     setEntries((prev) => {
       const sorted = [...prev].sort((a, b) => a.displayOrder - b.displayOrder);
@@ -124,7 +157,7 @@ export default function WALPage() {
         return { ...entry, displayOrder: newIndex };
       });
     });
-  }, [isAnimating, isTimeTraveling]);
+  }, [isAnimating]);
 
   const handleTimeTravelChange = useCallback((index: number) => {
     if (index < 0 || index >= snapshots.length) return;
@@ -132,26 +165,17 @@ export default function WALPage() {
     const snapshot = snapshots[index];
     setCurrentSnapshotIndex(index);
 
-    if (index === snapshots.length - 1 && liveSnapshot) {
-      setEntries(JSON.parse(JSON.stringify(liveSnapshot.entries)));
-      setPages(JSON.parse(JSON.stringify(liveSnapshot.pages)));
-      setFlushLSN(liveSnapshot.flushLSN);
-      setCheckpointLSN(liveSnapshot.checkpointLSN);
-      setNextLSN(liveSnapshot.nextLSN);
-      setNextPageId(liveSnapshot.nextPageId);
-      setHasCrashed(liveSnapshot.hasCrashed);
-      setIsTimeTraveling(false);
-    } else {
-      setEntries(JSON.parse(JSON.stringify(snapshot.entries)));
-      setPages(JSON.parse(JSON.stringify(snapshot.pages)));
-      setFlushLSN(snapshot.flushLSN);
-      setCheckpointLSN(snapshot.checkpointLSN);
-      setNextLSN(snapshot.nextLSN);
-      setNextPageId(snapshot.nextPageId);
-      setHasCrashed(snapshot.hasCrashed);
-      setIsTimeTraveling(true);
-    }
-  }, [snapshots, liveSnapshot]);
+    const isCurrentState = index === snapshots.length - 1;
+
+    setEntries(JSON.parse(JSON.stringify(snapshot.entries)));
+    setPages(JSON.parse(JSON.stringify(snapshot.pages)));
+    setFlushLSN(snapshot.flushLSN);
+    setCheckpointLSN(snapshot.checkpointLSN);
+    setNextLSN(snapshot.nextLSN);
+    setNextPageId(snapshot.nextPageId);
+    setHasCrashed(snapshot.hasCrashed);
+    setIsTimeTraveling(!isCurrentState);
+  }, [snapshots]);
 
   const saveLiveState = useCallback(() => {
     const snapshot: TimeTravelSnapshot = {
@@ -159,16 +183,16 @@ export default function WALPage() {
       type: 'write',
       timestamp: Date.now(),
       description: '当前状态',
-      entries: JSON.parse(JSON.stringify(entries)),
-      pages: JSON.parse(JSON.stringify(pages)),
-      flushLSN,
-      checkpointLSN,
-      nextLSN,
-      nextPageId,
-      hasCrashed,
+      entries: JSON.parse(JSON.stringify(latestEntriesRef.current)),
+      pages: JSON.parse(JSON.stringify(latestPagesRef.current)),
+      flushLSN: latestFlushLSNRef.current,
+      checkpointLSN: latestCheckpointLSNRef.current,
+      nextLSN: latestNextLSNRef.current,
+      nextPageId: latestNextPageIdRef.current,
+      hasCrashed: latestHasCrashedRef.current,
     };
     setLiveSnapshot(snapshot);
-  }, [entries, pages, flushLSN, checkpointLSN, nextLSN, nextPageId, hasCrashed]);
+  }, []);
 
   const handleEntryClick = useCallback((entry: WALLogEntry) => {
     setHighlightedEntryId(entry.id);
@@ -853,23 +877,45 @@ export default function WALPage() {
       </div>
 
       <div className="flex-1 flex gap-3 min-h-0">
-        <div className="w-80 flex-shrink-0 card p-3 flex flex-col min-h-0">
-          <WALLogView
-            entries={entries}
-            flushLSN={flushLSN}
-            checkpointLSN={checkpointLSN}
-            onEntryClick={handleEntryClick}
-            onDragReorder={handleDragReorder}
-            isAnimating={isAnimating || isTimeTraveling}
-          />
+        <div className="w-80 flex-shrink-0 card p-3 flex flex-col min-h-0 overflow-hidden">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={`log-${currentSnapshotIndex}`}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.35, ease: 'easeInOut' }}
+              className="flex-1 flex flex-col min-h-0"
+            >
+              <WALLogView
+                entries={entries}
+                flushLSN={flushLSN}
+                checkpointLSN={checkpointLSN}
+                onEntryClick={handleEntryClick}
+                onDragReorder={handleDragReorder}
+                isAnimating={isAnimating || isTimeTraveling}
+              />
+            </motion.div>
+          </AnimatePresence>
         </div>
 
-        <div className="flex-1 card p-3 flex flex-col min-h-0">
-          <DataPageView
-            pages={pages}
-            entries={entries}
-            onPageClick={handlePageClick}
-          />
+        <div className="flex-1 card p-3 flex flex-col min-h-0 overflow-hidden">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={`pages-${currentSnapshotIndex}`}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.35, ease: 'easeInOut' }}
+              className="flex-1 flex flex-col min-h-0"
+            >
+              <DataPageView
+                pages={pages}
+                entries={entries}
+                onPageClick={handlePageClick}
+              />
+            </motion.div>
+          </AnimatePresence>
         </div>
       </div>
 
