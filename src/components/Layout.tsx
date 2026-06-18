@@ -7,6 +7,7 @@ const navItems = [
   { path: '/fragmentation', label: '页面碎片化', icon: '📊' },
   { path: '/hash', label: 'Hash索引', icon: '🔑' },
   { path: '/lsm', label: 'LSM-Tree', icon: '📚' },
+  { path: '/wal', label: 'WAL预写日志', icon: '📝' },
   { path: '/skiplist', label: '跳表', icon: '🎿' },
   { path: '/bloom', label: '布隆过滤器', icon: '🌸' },
   { path: '/rtree', label: 'R树', icon: '📐' },

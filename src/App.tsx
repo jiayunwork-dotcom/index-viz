@@ -11,6 +11,7 @@ import RTreePage from './pages/RTreePage';
 import ComparisonPage from './pages/ComparisonPage';
 import LessonsPage from './pages/LessonsPage';
 import CustomPage from './pages/CustomPage';
+import WALPage from './pages/WALPage';
 
 export default function App() {
   return (
@@ -27,6 +28,7 @@ export default function App() {
         <Route path="comparison" element={<ComparisonPage />} />
         <Route path="lessons" element={<LessonsPage />} />
         <Route path="custom" element={<CustomPage />} />
+        <Route path="wal" element={<WALPage />} />
       </Route>
     </Routes>
   );

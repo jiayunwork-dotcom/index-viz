@@ -23,6 +23,13 @@ const modules = [
     color: 'from-orange-500 to-amber-600',
   },
   {
+    path: '/wal',
+    title: 'WAL 预写日志',
+    icon: '📝',
+    desc: '数据库 Write-Ahead Log 工作原理，日志追加、Checkpoint、崩溃模拟与恢复过程动画演示。',
+    color: 'from-rose-500 to-pink-600',
+  },
+  {
     path: '/skiplist',
     title: '跳表',
     icon: '🎿',
