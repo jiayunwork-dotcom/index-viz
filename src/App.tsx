@@ -2,6 +2,7 @@ import { Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
 import Home from './pages/Home';
 import BTreePage from './pages/BTreePage';
+import FragmentationPage from './pages/FragmentationPage';
 import HashPage from './pages/HashPage';
 import LSMTreePage from './pages/LSMTreePage';
 import SkipListPage from './pages/SkipListPage';
@@ -17,6 +18,7 @@ export default function App() {
       <Route path="/" element={<Layout />}>
         <Route index element={<Home />} />
         <Route path="btree" element={<BTreePage />} />
+        <Route path="fragmentation" element={<FragmentationPage />} />
         <Route path="hash" element={<HashPage />} />
         <Route path="lsm" element={<LSMTreePage />} />
         <Route path="skiplist" element={<SkipListPage />} />

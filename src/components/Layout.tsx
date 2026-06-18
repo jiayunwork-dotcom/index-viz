@@ -4,12 +4,13 @@ import { cn } from '@/lib/utils';
 const navItems = [
   { path: '/', label: '首页', icon: '🏠' },
   { path: '/btree', label: 'B树/B+树', icon: '🌳' },
+  { path: '/fragmentation', label: '页面碎片化', icon: '📊' },
   { path: '/hash', label: 'Hash索引', icon: '🔑' },
   { path: '/lsm', label: 'LSM-Tree', icon: '📚' },
   { path: '/skiplist', label: '跳表', icon: '🎿' },
   { path: '/bloom', label: '布隆过滤器', icon: '🌸' },
   { path: '/rtree', label: 'R树', icon: '📐' },
-  { path: '/comparison', label: '性能对比', icon: '📊' },
+  { path: '/comparison', label: '性能对比', icon: '📈' },
   { path: '/lessons', label: '教学关卡', icon: '🎓' },
   { path: '/custom', label: '自定义', icon: '⚙️' },
 ];
