@@ -136,26 +136,65 @@ export default function FragmentationPage() {
           const newPage = sim.pages[frame.newPageId];
 
           if (sourcePage && newPage) {
+            const sourceX = sourcePage.x;
+            const sourceY = sourcePage.y;
+            const targetX = newPage.x;
+
             sourcePage.isTearing = true;
-            newPage.splitFromX = sourcePage.x;
-            newPage.splitFromY = sourcePage.y;
-            newPage.splitDirection = 'right';
+            sourcePage.splitHalf = 'left';
+            sourcePage.splitOffset = 0;
+            sourcePage.splitOriginX = sourceX;
+            sourcePage.splitOriginY = sourceY;
+
+            newPage.splitFromX = sourceX;
+            newPage.splitFromY = sourceY;
+            newPage.splitHalf = 'right';
+            newPage.splitOffset = 0;
+            newPage.splitOriginX = sourceX;
+            newPage.splitOriginY = sourceY;
             newPage.isNew = true;
+
             setPages({ ...sim.pages });
             setHighlightedPageId(frame.sourcePageId);
-            await delay(getDelayMs() * 2);
+            await delay(getDelayMs() * 0.5);
 
             sourcePage.isTearing = false;
             setPages({ ...sim.pages });
-            await delay(getDelayMs());
 
+            const slideSteps = 10;
+            const totalDistance = targetX - sourceX + 90;
+            const stepDistance = totalDistance / slideSteps;
+
+            for (let i = 1; i <= slideSteps; i++) {
+              if (!isRunningRef.current) break;
+              newPage.splitOffset = stepDistance * i;
+              setPages({ ...sim.pages });
+              await delay(getDelayMs() * 0.08);
+            }
+
+            newPage.splitOffset = totalDistance;
+            setPages({ ...sim.pages });
+            await delay(getDelayMs() * 0.3);
+
+            sourcePage.splitHalf = 'full';
+            sourcePage.splitOffset = undefined;
+            sourcePage.splitOriginX = undefined;
+            sourcePage.splitOriginY = undefined;
+
+            newPage.splitHalf = 'full';
+            newPage.splitOffset = undefined;
+            newPage.splitOriginX = undefined;
+            newPage.splitOriginY = undefined;
             newPage.splitFromX = undefined;
             newPage.splitFromY = undefined;
             newPage.splitDirection = undefined;
+
+            setPages({ ...sim.pages });
+            await delay(getDelayMs() * 0.5);
           }
 
           syncFromSimulator();
-          await delay(getDelayMs() * 0.5);
+          await delay(getDelayMs() * 0.3);
         }
       }
 
@@ -281,14 +320,8 @@ export default function FragmentationPage() {
     setAnimationPhase('reindex_compact');
     setCurrentOperation('紧凑阶段: 创建新页面');
 
-    const oldPages = { ...sim.pages };
+    const oldPageIds = [...sim.pageOrder];
     const oldLeafChain = [...sim.leafChain];
-
-    Object.keys(oldPages).forEach((id) => {
-      oldPages[id].isFading = true;
-    });
-    setPages({ ...sim.pages, ...oldPages });
-    await delay(getDelayMs());
 
     const newLeafChain: string[] = [];
     const PAGE_WIDTH = 180;
@@ -300,6 +333,9 @@ export default function FragmentationPage() {
     const startRow = Math.ceil(sim.pageOrder.length / PAGES_PER_ROW) + 2;
     let currentKeyIdx = 0;
     let newPageIdx = 0;
+    let oldPageFadeIdx = 0;
+
+    const fadingPages: Record<string, boolean> = {};
 
     while (currentKeyIdx < allKeys.length && isRunningRef.current) {
       const col = newPageIdx % PAGES_PER_ROW;
@@ -311,7 +347,13 @@ export default function FragmentationPage() {
       newPage.isNew = true;
       newLeafChain.push(newPage.id);
 
-      setPages({ ...sim.pages, ...oldPages });
+      const pagesToShow = { ...sim.pages };
+      Object.keys(fadingPages).forEach((id) => {
+        if (pagesToShow[id]) {
+          pagesToShow[id] = { ...pagesToShow[id], isFading: true };
+        }
+      });
+      setPages(pagesToShow);
       setCurrentOperation(`紧凑阶段: 第 ${newPageIdx + 1} 页`);
       await delay(getDelayMs() * 0.7);
 
@@ -321,14 +363,51 @@ export default function FragmentationPage() {
         i++
       ) {
         newPage.slots[i] = { key: allKeys[currentKeyIdx], status: 'used' };
-        setPages({ ...sim.pages, ...oldPages });
+        const pagesWithKeys = { ...sim.pages };
+        Object.keys(fadingPages).forEach((id) => {
+          if (pagesWithKeys[id]) {
+            pagesWithKeys[id] = { ...pagesWithKeys[id], isFading: true };
+          }
+        });
+        setPages(pagesWithKeys);
         setCurrentOperation(
           `紧凑阶段: 第 ${newPageIdx + 1} 页 - key ${allKeys[currentKeyIdx]}`
         );
         await delay(Math.max(15, getDelayMs() * 0.3));
         currentKeyIdx++;
       }
+
+      if (oldPageFadeIdx < oldPageIds.length && isRunningRef.current) {
+        const pageToFade = oldPageIds[oldPageFadeIdx];
+        fadingPages[pageToFade] = true;
+        oldPageFadeIdx++;
+
+        const pagesWithFade = { ...sim.pages };
+        Object.keys(fadingPages).forEach((id) => {
+          if (pagesWithFade[id]) {
+            pagesWithFade[id] = { ...pagesWithFade[id], isFading: true };
+          }
+        });
+        setPages(pagesWithFade);
+        await delay(getDelayMs() * 0.3);
+      }
+
       newPageIdx++;
+    }
+
+    while (oldPageFadeIdx < oldPageIds.length && isRunningRef.current) {
+      const pageToFade = oldPageIds[oldPageFadeIdx];
+      fadingPages[pageToFade] = true;
+      oldPageFadeIdx++;
+
+      const pagesWithFade = { ...sim.pages };
+      Object.keys(fadingPages).forEach((id) => {
+        if (pagesWithFade[id]) {
+          pagesWithFade[id] = { ...pagesWithFade[id], isFading: true };
+        }
+      });
+      setPages(pagesWithFade);
+      await delay(getDelayMs() * 0.4);
     }
 
     if (!isRunningRef.current) {
@@ -338,11 +417,28 @@ export default function FragmentationPage() {
 
     sim.leafChain = newLeafChain;
 
-    Object.keys(oldPages).forEach((id) => {
-      delete sim.pages[id];
-      const idx = sim.pageOrder.indexOf(id);
-      if (idx >= 0) sim.pageOrder.splice(idx, 1);
-    });
+    const pagesToDelete = Object.keys(fadingPages);
+    for (let i = 0; i < pagesToDelete.length && isRunningRef.current; i++) {
+      const id = pagesToDelete[i];
+      if (sim.pages[id]) {
+        sim.pages[id].isFading = true;
+        const pagesWithDelete = { ...sim.pages };
+        for (let j = i; j < pagesToDelete.length; j++) {
+          if (pagesWithDelete[pagesToDelete[j]]) {
+            pagesWithDelete[pagesToDelete[j]] = {
+              ...pagesWithDelete[pagesToDelete[j]],
+              isFading: true,
+            };
+          }
+        }
+        setPages(pagesWithDelete);
+        await delay(getDelayMs() * 0.2);
+        delete sim.pages[id];
+        const idx = sim.pageOrder.indexOf(id);
+        if (idx >= 0) sim.pageOrder.splice(idx, 1);
+        setPages({ ...sim.pages });
+      }
+    }
 
     sim.pageOrder.forEach((id, idx) => {
       sim.pages[id].pageIndex = idx;

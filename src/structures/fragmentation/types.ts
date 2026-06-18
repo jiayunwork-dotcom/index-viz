@@ -22,6 +22,11 @@ export interface PhysicalPage {
   splitFromY?: number;
   splitDirection?: 'left' | 'right';
   scanSlotIndex?: number | null;
+  splitHalf?: 'left' | 'right' | 'full';
+  splitOffset?: number;
+  splitWidthScale?: number;
+  splitOriginX?: number;
+  splitOriginY?: number;
 }
 
 export interface LogicalNode {

@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import PageBlock from './PageBlock';
 import PointerLines from './PointerLines';
 import type { PhysicalPage } from '@/structures/fragmentation/types';
@@ -19,8 +19,36 @@ export default function PhysicalPageView({
   onPageDragEnd,
 }: PhysicalPageViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const [dragPositions, setDragPositions] = useState<Record<string, { x: number; y: number }>>({});
 
-  const pageList = Object.values(pages);
+  const handleDragMove = (pageId: string, x: number, y: number) => {
+    setDragPositions((prev) => ({
+      ...prev,
+      [pageId]: { x, y },
+    }));
+  };
+
+  const handleDragEnd = (pageId: string, x: number, y: number) => {
+    setDragPositions((prev) => {
+      const next = { ...prev };
+      delete next[pageId];
+      return next;
+    });
+    onPageDragEnd(pageId, x, y);
+  };
+
+  const getEffectivePages = () => {
+    const effective = { ...pages };
+    Object.entries(dragPositions).forEach(([id, pos]) => {
+      if (effective[id]) {
+        effective[id] = { ...effective[id], x: pos.x, y: pos.y };
+      }
+    });
+    return effective;
+  };
+
+  const effectivePages = getEffectivePages();
+  const pageList = Object.values(effectivePages);
   const maxX = Math.max(...pageList.map((p) => p.x + 200), 300);
   const maxY = Math.max(...pageList.map((p) => p.y + 160), 200);
 
@@ -33,13 +61,14 @@ export default function PhysicalPageView({
         className="relative"
         style={{ width: maxX + 40, height: maxY + 40, minWidth: '100%', minHeight: '100%' }}
       >
-        <PointerLines pages={pages} leafChain={leafChain} />
+        <PointerLines pages={effectivePages} leafChain={leafChain} />
 
         {Object.values(pages).map((page) => (
           <PageBlock
             key={page.id}
             page={page}
-            onDragEnd={onPageDragEnd}
+            onDragEnd={handleDragEnd}
+            onDragMove={handleDragMove}
             isHighlighted={highlightedPageId === page.id}
             isScanning={scanningPageIds.includes(page.id)}
           />

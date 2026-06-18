@@ -351,11 +351,29 @@ export class FragmentationSimulator {
 
     let maxJump = 0;
     if (this.leafChain.length > 1) {
+      const allPageIds = Object.keys(this.pages);
+      const sortedByPosition = [...allPageIds].sort((a, b) => {
+        const pa = this.pages[a];
+        const pb = this.pages[b];
+        if (pa && pb) {
+          if (Math.abs(pa.y - pb.y) > 10) {
+            return pa.y - pb.y;
+          }
+          return pa.x - pb.x;
+        }
+        return 0;
+      });
+
+      const positionIndex: Record<string, number> = {};
+      sortedByPosition.forEach((id, idx) => {
+        positionIndex[id] = idx;
+      });
+
       for (let i = 0; i < this.leafChain.length - 1; i++) {
-        const p1 = this.pages[this.leafChain[i]];
-        const p2 = this.pages[this.leafChain[i + 1]];
-        if (p1 && p2) {
-          const dist = Math.abs(p2.pageIndex - p1.pageIndex);
+        const p1 = this.leafChain[i];
+        const p2 = this.leafChain[i + 1];
+        if (positionIndex[p1] !== undefined && positionIndex[p2] !== undefined) {
+          const dist = Math.abs(positionIndex[p2] - positionIndex[p1]);
           if (dist > maxJump) maxJump = dist;
         }
       }
