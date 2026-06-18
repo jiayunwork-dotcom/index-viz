@@ -485,48 +485,30 @@ export default function BTreeCanvas({ frame }: BTreeCanvasProps) {
         </g>
 
         {showUpKey && (
-          <g key={`upkey-${frame.insertingKey}-${frame.nodeId || 'split'}`}>
-            <motion.circle
-              cx={upKeyX}
-              cy={upKeyStartY}
+          <motion.g
+            key={`upkey-${frame.insertingKey}-${frame.nodeId || 'split'}`}
+            initial={{ x: upKeyX, y: upKeyStartY, opacity: 0 }}
+            animate={{ x: upKeyEndX, y: upKeyEndY, opacity: 1 }}
+            transition={{ duration: 0.9, ease: 'easeOut' }}
+          >
+            <circle
+              cx={0}
+              cy={0}
               r={18}
               fill="#ef4444"
-              style={{ transformOrigin: `${upKeyEndX}px ${upKeyEndY}px` }}
-              animate={{
-                cx: upKeyEndX,
-                cy: upKeyEndY,
-                opacity: [0, 1, 1, 0.95],
-              }}
-              transition={{ duration: 0.9, ease: 'easeOut' }}
             />
-            <motion.text
-              x={upKeyX}
-              y={upKeyStartY + 5}
+            <text
+              x={0}
+              y={5}
               textAnchor="middle"
               fontSize="14"
               fontWeight="700"
               fill="white"
               fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
-              animate={{
-                x: upKeyEndX,
-                y: upKeyEndY + 5,
-                opacity: [0, 1, 1, 0.95],
-              }}
-              transition={{ duration: 0.9, ease: 'easeOut' }}
             >
               {frame.insertingKey}
-            </motion.text>
-            <motion.path
-              d={`M ${upKeyX} ${upKeyStartY} Q ${upKeyX + 30} ${(upKeyStartY + upKeyEndY) / 2 - 20}, ${upKeyEndX} ${upKeyEndY + 18}`}
-              stroke="#ef4444"
-              strokeWidth={2.5}
-              strokeDasharray="5 3"
-              fill="none"
-              initial={{ pathLength: 0, opacity: 0 }}
-              animate={{ pathLength: 1, opacity: 0.6 }}
-              transition={{ duration: 0.7, delay: 0.05 }}
-            />
-          </g>
+            </text>
+          </motion.g>
         )}
 
         {frame.type === 'borrowing' && frame.nodeId && (() => {
