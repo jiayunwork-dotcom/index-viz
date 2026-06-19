@@ -90,31 +90,31 @@ function VersionNode({
 
       <line x1={x + 10} y1={y + 68} x2={x + NODE_WIDTH - 10} y2={y + 68} stroke="#cbd5e1" strokeWidth={1} />
 
-      <text x={x + 12} y={y + 84} fontSize="10" fill="#64748b">
-        <tspan fill="#94a3b8">创建:</tspan>
+      <text x={x + 12} y={y + 83} fontSize="10" fill="#64748b">
+        <tspan fill="#334155" fontWeight="bold">xmin:</tspan>
         <tspan fill={borderColor} fontWeight="bold"> T{version.xmin}</tspan>
         <tspan fill="#94a3b8"> · </tspan>
-        <tspan
-          fill={xminColors[version.xminStatus]}
-          fontWeight="600"
-        >
+        <tspan fill={xminColors[version.xminStatus]} fontWeight="600">
           {version.xminStatus === 'active' ? '活跃' : version.xminStatus === 'committed' ? '已提交' : '已回滚'}
         </tspan>
       </text>
 
-      <text x={x + 12} y={y + 99} fontSize="10" fill="#64748b">
-        <tspan fill="#94a3b8">[{version.xmin},</tspan>
-        <tspan fill={version.xmax ? '#f59e0b' : '#94a3b8'} fontWeight="600">
-          {version.xmax ? ` T${version.xmax}` : ' ∞'}
-        </tspan>
-        <tspan fill="#94a3b8">)</tspan>
-        {version.xmax && (
-          <tspan
-            fill={version.xmaxStatus ? xminColors[version.xmaxStatus] : '#94a3b8'}
-            fontWeight="500"
-          >
-            {' '}{version.xmaxStatus === 'active' ? '活跃' : version.xmaxStatus === 'committed' ? '已删' : '回滚'}
-          </tspan>
+      <text x={x + 12} y={y + 100} fontSize="10" fill="#64748b">
+        <tspan fill="#334155" fontWeight="bold">xmax:</tspan>
+        {version.xmax ? (
+          <>
+            <tspan fill="#f59e0b" fontWeight="bold"> T{version.xmax}</tspan>
+            {version.xmaxStatus && (
+              <tspan fill="#94a3b8"> · </tspan>
+            )}
+            {version.xmaxStatus && (
+              <tspan fill={xminColors[version.xmaxStatus]} fontWeight="600">
+                {version.xmaxStatus === 'active' ? '活跃' : version.xmaxStatus === 'committed' ? '已删除' : '已回滚'}
+              </tspan>
+            )}
+          </>
+        ) : (
+          <tspan fill="#94a3b8" fontWeight="500"> ∞（未删除）</tspan>
         )}
       </text>
     </motion.g>

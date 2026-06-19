@@ -71,6 +71,6 @@ export const INITIAL_ROWS: DataRow[] = [
 ];
 
 export const NODE_WIDTH = 180;
-export const NODE_HEIGHT = 110;
+export const NODE_HEIGHT = 125;
 export const NODE_GAP = 60;
 export const SVG_PADDING = 40;
