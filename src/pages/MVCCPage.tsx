@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import TransactionPanel from '@/components/mvcc/TransactionPanel';
 import DataTableView from '@/components/mvcc/DataTableView';
 import VersionChainView from '@/components/mvcc/VersionChainView';
@@ -7,11 +7,14 @@ import VisibilityPanel from '@/components/mvcc/VisibilityPanel';
 import ControlBar from '@/components/mvcc/ControlBar';
 import WriteDialog from '@/components/mvcc/WriteDialog';
 import ReadDialog from '@/components/mvcc/ReadDialog';
+import TimelinePanel from '@/components/mvcc/TimelinePanel';
+import { useMVCCStore } from '@/store/mvccStore';
 import type { WriteDialogState, ReadDialogState } from '@/structures/mvcc/types';
 
 export default function MVCCPage() {
   const [writeDialog, setWriteDialog] = useState<WriteDialogState>({ open: false, txnId: null });
   const [readDialog, setReadDialog] = useState<ReadDialogState>({ open: false, txnId: null });
+  const timelineOpen = useMVCCStore((s) => s.timelineOpen);
 
   const handleOpenWrite = useCallback((txnId: string) => {
     setWriteDialog({ open: true, txnId });
@@ -89,6 +92,20 @@ export default function MVCCPage() {
       >
         <ControlBar />
       </motion.div>
+
+      <AnimatePresence>
+        {timelineOpen && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.3, ease: 'easeInOut' }}
+            className="overflow-hidden flex-shrink-0"
+          >
+            <TimelinePanel />
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <WriteDialog
         open={writeDialog.open}

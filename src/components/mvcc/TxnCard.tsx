@@ -23,10 +23,11 @@ const TxnCard = forwardRef<HTMLDivElement, TxnCardProps>(function TxnCard(
   { txn, index, dragIndexRef, onOpenWrite, onOpenRead },
   ref
 ) {
-  const { commitTransaction, abortTransaction, isAnimating } = useMVCCStore();
+  const { commitTransaction, abortTransaction, isAnimating, deadlocks } = useMVCCStore();
   const controls = useDragControls();
   const cfg = statusConfig[txn.status];
   const isActive = txn.status === 'active';
+  const isDeadlocked = deadlocks.some(d => d.txnNums.includes(txn.txnNum));
 
   return (
     <Reorder.Item
@@ -46,9 +47,10 @@ const TxnCard = forwardRef<HTMLDivElement, TxnCardProps>(function TxnCard(
       transition={{ duration: 0.25, ease: 'easeOut' }}
       className={cn(
         'card p-3 transition-shadow hover:shadow-md',
-        txn.status === 'aborted' && 'opacity-70'
+        txn.status === 'aborted' && 'opacity-70',
+        isDeadlocked && 'animate-deadlock-flash'
       )}
-      style={{ position: 'relative' }}
+      style={{ position: 'relative', ...(isDeadlocked ? { boxShadow: '0 0 0 2px #ef4444' } : {}) }}
     >
       <div className="flex items-start justify-between mb-2" style={{ pointerEvents: 'auto' }}>
         <div className="flex items-center gap-2">

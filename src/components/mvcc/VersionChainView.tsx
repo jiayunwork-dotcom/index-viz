@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect, useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useMVCCStore } from '@/store/mvccStore';
 import { INITIAL_ROWS, NODE_WIDTH, NODE_HEIGHT, NODE_GAP, SVG_PADDING } from '@/structures/mvcc/types';
@@ -31,16 +31,19 @@ function VersionNode({
   y,
   isFirst,
   isLast,
+  isGCMarked,
 }: {
   version: Version;
   x: number;
   y: number;
   isFirst: boolean;
   isLast: boolean;
+  isGCMarked: boolean;
 }) {
   const rx = 10;
   const borderColor = xminColors[version.xminStatus];
-  const bgColor = version.isHighlighted ? '#fef3c7' : xminBgColors[version.xminStatus];
+  let bgColor = version.isHighlighted ? '#fef3c7' : xminBgColors[version.xminStatus];
+  if (isGCMarked) bgColor = '#fde68a';
 
   return (
     <motion.g
@@ -66,11 +69,26 @@ function VersionNode({
         initial={false}
         animate={{
           strokeWidth: version.isHighlighted ? 3 : 2,
-          fill: version.isHighlighted ? '#fef3c7' : xminBgColors[version.xminStatus],
+          fill: isGCMarked ? '#fde68a' : version.isHighlighted ? '#fef3c7' : xminBgColors[version.xminStatus],
         }}
         transition={{ duration: 0.3 }}
-        filter={version.isHighlighted ? 'url(#highlight-shadow)' : undefined}
+        filter={version.isHighlighted ? 'url(#highlight-shadow)' : isGCMarked ? 'url(#gc-mark-shadow)' : undefined}
       />
+
+      {isGCMarked && (
+        <motion.rect
+          x={x}
+          y={y}
+          width={NODE_WIDTH}
+          height={NODE_HEIGHT}
+          rx={rx}
+          fill="none"
+          stroke="#f59e0b"
+          strokeWidth={3}
+          animate={{ opacity: [1, 0.3, 1] }}
+          transition={{ duration: 0.8, repeat: Infinity }}
+        />
+      )}
 
       {isFirst && (
         <g>
@@ -143,10 +161,93 @@ function Arrow({ fromX, fromY, toX, toY }: { fromX: number; fromY: number; toX: 
   );
 }
 
+function DeadlockPath({ deadlock, versions }: { deadlock: { txnNums: [number, number]; rowIds: [number, number] }; versions: Map<number, Version[]> }) {
+  const [txnA, txnB] = deadlock.txnNums;
+  const [rowA, rowB] = deadlock.rowIds;
+
+  const nodesA: { x: number; y: number }[] = [];
+  const nodesB: { x: number; y: number }[] = [];
+
+  for (const [rowId, versionList] of versions) {
+    const rowIdx = INITIAL_ROWS.findIndex((r) => r.id === rowId);
+    if (rowIdx === -1) continue;
+    const rowY = getRowY(rowIdx);
+
+    for (let i = 0; i < versionList.length; i++) {
+      const v = versionList[i];
+      const nodeX = getNodeX(i);
+      if (v.xmin === txnA) nodesA.push({ x: nodeX + NODE_WIDTH / 2, y: rowY + NODE_HEIGHT / 2 });
+      if (v.xmin === txnB) nodesB.push({ x: nodeX + NODE_WIDTH / 2, y: rowY + NODE_HEIGHT / 2 });
+    }
+  }
+
+  const aWriteNode = nodesA.length > 0 ? nodesA[0] : null;
+  const bWriteNode = nodesB.length > 0 ? nodesB[0] : null;
+
+  const rowAY = (() => {
+    const idx = INITIAL_ROWS.findIndex((r) => r.id === rowA);
+    return idx !== -1 ? getRowY(idx) + NODE_HEIGHT / 2 : 0;
+  })();
+  const rowBY = (() => {
+    const idx = INITIAL_ROWS.findIndex((r) => r.id === rowB);
+    return idx !== -1 ? getRowY(idx) + NODE_HEIGHT / 2 : 0;
+  })();
+
+  const aHoldsRowB = rowBY;
+  const bHoldsRowA = rowAY;
+
+  if (!aWriteNode || !bWriteNode) return null;
+
+  const offset = 40;
+  const points = [
+    { x: aWriteNode.x, y: aWriteNode.y - offset },
+    { x: aWriteNode.x, y: aHoldsRowB - offset },
+    { x: bWriteNode.x, y: bHoldsRowA - offset },
+    { x: bWriteNode.x, y: bWriteNode.y - offset },
+    { x: aWriteNode.x, y: aWriteNode.y - offset },
+  ];
+
+  const pathD = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+
+  return (
+    <g>
+      <motion.path
+        d={pathD}
+        fill="none"
+        stroke="#ef4444"
+        strokeWidth={2.5}
+        strokeDasharray="8,4"
+        animate={{ strokeDashoffset: [0, -24] }}
+        transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+      />
+      <defs>
+        <marker id="deadlock-arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+          <polygon points="0 0, 8 4, 0 8" fill="#ef4444" />
+        </marker>
+      </defs>
+      <motion.path
+        d={pathD}
+        fill="none"
+        stroke="#ef4444"
+        strokeWidth={2.5}
+        strokeDasharray="8,4"
+        markerEnd="url(#deadlock-arrow)"
+        animate={{ strokeDashoffset: [0, -24] }}
+        transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+      />
+      <text x={(aWriteNode.x + bWriteNode.x) / 2} y={Math.min(aWriteNode.y, bWriteNode.y) - offset - 12} textAnchor="middle" fontSize="11" fontWeight="bold" fill="#ef4444">
+        ⚠ DEADLOCK
+      </text>
+    </g>
+  );
+}
+
 export default function VersionChainView() {
-  const { versions } = useMVCCStore();
+  const { versions, deadlocks, gcState } = useMVCCStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [maxWidth, setMaxWidth] = useState(800);
+
+  const gcMarkedIds = useMemo(() => new Set(gcState.markedVersionIds), [gcState.markedVersionIds]);
 
   useEffect(() => {
     let maxLen = 0;
@@ -173,6 +274,11 @@ export default function VersionChainView() {
           <span className="flex items-center gap-1">
             <span className="w-2.5 h-2.5 rounded-full bg-red-500" /> 已回滚
           </span>
+          {gcState.phase !== 'idle' && (
+            <span className="flex items-center gap-1">
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse" /> GC处理中
+            </span>
+          )}
         </div>
       </div>
 
@@ -189,6 +295,9 @@ export default function VersionChainView() {
           <defs>
             <filter id="highlight-shadow" x="-20%" y="-20%" width="140%" height="140%">
               <feDropShadow dx="0" dy="0" stdDeviation="6" floodColor="#f59e0b" floodOpacity="0.6" />
+            </filter>
+            <filter id="gc-mark-shadow" x="-20%" y="-20%" width="140%" height="140%">
+              <feDropShadow dx="0" dy="0" stdDeviation="5" floodColor="#f59e0b" floodOpacity="0.5" />
             </filter>
             <marker id="arrowhead" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
               <polygon points="0 0, 8 4, 0 8" fill="#94a3b8" />
@@ -230,6 +339,7 @@ export default function VersionChainView() {
                   const nodeX = getNodeX(i);
                   const isFirst = i === 0;
                   const isLast = i === versionList.length - 1;
+                  const isGCMarked = gcMarkedIds.has(v.versionId);
 
                   return (
                     <g key={v.versionId}>
@@ -239,6 +349,7 @@ export default function VersionChainView() {
                         y={rowY}
                         isFirst={isFirst}
                         isLast={isLast}
+                        isGCMarked={isGCMarked}
                       />
                       {!isLast && (
                         <Arrow
@@ -266,6 +377,10 @@ export default function VersionChainView() {
               </g>
             );
           })}
+
+          {deadlocks.map((deadlock, idx) => (
+            <DeadlockPath key={`dl-${idx}`} deadlock={deadlock} versions={versions} />
+          ))}
         </svg>
       </div>
 

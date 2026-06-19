@@ -13,6 +13,13 @@
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
       'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
   }
+  @keyframes deadlock-flash {
+    0%, 100% { box-shadow: 0 0 0 2px #ef4444; }
+    50% { box-shadow: 0 0 0 4px #ef4444, 0 0 12px rgba(239, 68, 68, 0.4); }
+  }
+  .animate-deadlock-flash {
+    animation: deadlock-flash 0.8s ease-in-out infinite;
+  }
 }
 
 @layer components {

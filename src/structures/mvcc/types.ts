@@ -62,6 +62,32 @@ export interface ReadDialogState {
   txnId: string | null;
 }
 
+export type TimelineEventType = 'create' | 'write' | 'read' | 'commit' | 'abort' | 'gc';
+
+export interface TimelineEvent {
+  id: string;
+  type: TimelineEventType;
+  txnNum: number;
+  timestamp: number;
+  detail: string;
+  rowId?: number;
+}
+
+export interface DeadlockInfo {
+  txnNums: [number, number];
+  rowIds: [number, number];
+  description: string;
+}
+
+export type GCPhase = 'idle' | 'marking' | 'sweeping' | 'done';
+
+export interface GCState {
+  phase: GCPhase;
+  markedVersionIds: string[];
+  sweepingVersionId: string | null;
+  sweepIndex: number;
+}
+
 export const INITIAL_ROWS: DataRow[] = [
   { id: 1, name: 'Alice', balance: 1000 },
   { id: 2, name: 'Bob', balance: 500 },
