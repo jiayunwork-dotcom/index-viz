@@ -253,7 +253,7 @@ export const useMVCCStore = create<MVCCState>((set, get) => ({
         reason = `xmin(T${v.xmin}) > 快照时间戳(${effectiveSnapshotTs})→不可见`;
       } else if (v.xmax !== null) {
         if (v.xmaxStatus === 'aborted') {
-          reason = `xmax(T${v.xmin})已回滚，版本有效→检查通过`;
+          reason = `xmax(T${v.xmax})已回滚，版本有效→检查通过`;
         } else if (v.xmaxStatus === 'active') {
           if (v.xmax === txn.txnNum) {
             visible = false;

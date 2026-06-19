@@ -86,21 +86,27 @@ export default function TransactionPanel({ onOpenWrite, onOpenRead }: Props) {
                   onDragStart={() => handleDragStart(index)}
                   onDragEnd={handleDragEnd}
                   as="div"
-                  dragListener={!isAnimating}
+                  dragListener={false}
                   initial={{ opacity: 0, y: -10, scale: 0.95 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, x: -20, scale: 0.9 }}
                   transition={{ duration: 0.25, ease: 'easeOut' }}
                   className={cn(
-                    'card p-3 cursor-grab active:cursor-grabbing select-none',
+                    'card p-3 select-none',
                     'transition-shadow hover:shadow-md',
                     txn.status === 'aborted' && 'opacity-70'
                   )}
-                  style={{ touchAction: 'none' }}
                 >
                   <div className="flex items-start justify-between mb-2">
                     <div className="flex items-center gap-2">
-                      <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-slate-800 text-white font-bold text-sm">
+                      <div
+                        data-drag-handle
+                        className={cn(
+                          'flex items-center justify-center w-8 h-8 rounded-lg bg-slate-800 text-white font-bold text-sm',
+                          !isAnimating && 'cursor-grab active:cursor-grabbing'
+                        )}
+                        title="拖拽可排序"
+                      >
                         T{txn.txnNum}
                       </div>
                       <div>

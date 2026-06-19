@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useMVCCStore, getCurrentVisibleRows } from '@/store/mvccStore';
 import { INITIAL_ROWS } from '@/structures/mvcc/types';
@@ -9,46 +9,58 @@ export default function DataTableView() {
   const { versions, transactions, isolationLevel, nextTs, readResult } = useMVCCStore();
   const [selectedTxnId, setSelectedTxnId] = useState<string | 'global'>('global');
 
-  let displayRows: DataRow[] = [];
-  if (selectedTxnId === 'global') {
-    const globalRows = new Map<number, DataRow>();
-    for (const [rowId, versionList] of versions) {
-      for (const v of versionList) {
-        if (v.xminStatus === 'committed' && (v.xmax === null || v.xmaxStatus !== 'committed')) {
-          globalRows.set(rowId, { id: rowId, name: v.name, balance: v.balance });
-          break;
-        }
-      }
+  useEffect(() => {
+    if (selectedTxnId === 'global') return;
+    const txn = transactions.find((t) => t.txnId === selectedTxnId);
+    if (!txn || txn.status !== 'active') {
+      setSelectedTxnId('global');
     }
-    displayRows = Array.from(globalRows.values()).sort((a, b) => a.id - b.id);
-    if (displayRows.length === 0) {
-      displayRows = INITIAL_ROWS.map((r) => {
-        const vl = versions.get(r.id);
-        if (vl && vl.length > 0) {
-          for (const v of vl) {
-            if (v.xminStatus === 'committed' && (v.xmax === null || v.xmaxStatus !== 'committed')) {
-              return { id: r.id, name: v.name, balance: v.balance };
+  }, [transactions, selectedTxnId]);
+
+  const displayRows: DataRow[] = useMemo(() => {
+    if (selectedTxnId === 'global') {
+      const globalRows: DataRow[] = [];
+      for (const rowDef of INITIAL_ROWS) {
+        const versionList = versions.get(rowDef.id) || [];
+        let found: DataRow | null = null;
+        for (const v of versionList) {
+          if (v.xminStatus === 'committed') {
+            const xmaxOk =
+              v.xmax === null ||
+              v.xmaxStatus === 'aborted' ||
+              (v.xmaxStatus === 'active');
+            if (xmaxOk) {
+              found = { id: rowDef.id, name: v.name, balance: v.balance };
+              break;
             }
           }
-          const lv = vl[vl.length - 1];
-          return { id: r.id, name: lv.name, balance: lv.balance };
         }
-        return r;
-      });
+        if (found) {
+          globalRows.push(found);
+        } else if (versionList.length > 0) {
+          const lv = versionList[versionList.length - 1];
+          globalRows.push({ id: rowDef.id, name: lv.name, balance: lv.balance });
+        } else {
+          globalRows.push(rowDef);
+        }
+      }
+      return globalRows;
+    } else {
+      const txn = transactions.find((t) => t.txnId === selectedTxnId);
+      if (txn) {
+        const rows = getCurrentVisibleRows(
+          versions,
+          txn.txnNum,
+          txn.snapshotTs,
+          transactions,
+          isolationLevel,
+          nextTs
+        );
+        if (rows.length > 0) return rows;
+      }
+      return INITIAL_ROWS.map((r) => ({ ...r }));
     }
-  } else {
-    const txn = transactions.find((t) => t.txnId === selectedTxnId);
-    if (txn) {
-      displayRows = getCurrentVisibleRows(
-        versions,
-        txn.txnNum,
-        txn.snapshotTs,
-        transactions,
-        isolationLevel,
-        nextTs
-      );
-    }
-  }
+  }, [selectedTxnId, versions, transactions, isolationLevel, nextTs]);
 
   const rowMap = new Map(displayRows.map((r) => [r.id, r]));
   const orderedRows = INITIAL_ROWS.map((r) => rowMap.get(r.id)).filter((r): r is DataRow => !!r);

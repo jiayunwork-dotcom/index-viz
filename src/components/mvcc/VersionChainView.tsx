@@ -242,9 +242,9 @@ export default function VersionChainView() {
                       />
                       {!isLast && (
                         <Arrow
-                          fromX={nodeX}
+                          fromX={nodeX + NODE_WIDTH}
                           fromY={rowY + NODE_HEIGHT / 2}
-                          toX={nodeX + NODE_WIDTH + NODE_GAP - 4}
+                          toX={getNodeX(i + 1) - 10}
                           toY={rowY + NODE_HEIGHT / 2}
                         />
                       )}
