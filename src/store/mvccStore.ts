@@ -32,7 +32,6 @@ interface MVCCState {
   deadlocks: DeadlockInfo[];
   deadlockWarning: DeadlockInfo | null;
   gcState: GCState;
-  pendingWrites: Map<string, number>;
 
   createTransaction: () => void;
   commitTransaction: (txnId: string) => Promise<void>;
@@ -52,6 +51,7 @@ interface MVCCState {
   dismissDeadlockWarning: () => void;
   resolveDeadlock: (txnNum: number) => Promise<void>;
   runGC: () => Promise<void>;
+  clearGCNoOp: () => void;
 }
 
 function createInitialVersions(): Map<number, Version[]> {
@@ -87,6 +87,16 @@ function addTimelineEvent(
   ];
 }
 
+function getRowHolder(versions: Map<number, Version[]>, rowId: number, currentTxnNum: number): number | null {
+  const rowVersions = versions.get(rowId);
+  if (!rowVersions || rowVersions.length === 0) return null;
+  const latest = rowVersions[0];
+  if (latest.xminStatus === 'active' && latest.xmin !== currentTxnNum) {
+    return latest.xmin;
+  }
+  return null;
+}
+
 export const useMVCCStore = create<MVCCState>((set, get) => ({
   transactions: [],
   versions: createInitialVersions(),
@@ -103,11 +113,10 @@ export const useMVCCStore = create<MVCCState>((set, get) => ({
   replaySpeed: 1,
   deadlocks: [],
   deadlockWarning: null,
-  gcState: { phase: 'idle', markedVersionIds: [], sweepingVersionId: null, sweepIndex: 0 },
-  pendingWrites: new Map(),
+  gcState: { phase: 'idle', markedVersionIds: [], sweepingVersionId: null, sweepIndex: 0, noOpMessage: null },
 
   createTransaction: () => {
-    const { nextTxnNum, nextTs, transactions, timelineEvents } = get();
+    const { nextTxnNum, nextTs, transactions, timelineEvents, isReplaying } = get();
     const newTxn: Transaction = {
       txnId: uuidv4(),
       txnNum: nextTxnNum,
@@ -116,23 +125,26 @@ export const useMVCCStore = create<MVCCState>((set, get) => ({
       snapshotTs: nextTs,
       displayOrder: transactions.length,
       writes: [],
+      pendingWrites: [],
     };
     set({
       transactions: [...transactions, newTxn],
       nextTxnNum: nextTxnNum + 1,
       nextTs: nextTs + 1,
-      timelineEvents: addTimelineEvent(
-        timelineEvents,
-        'create',
-        nextTxnNum,
-        `创建事务 T${nextTxnNum}，快照时间戳=${nextTs}`,
-        nextTs
-      ),
+      timelineEvents: isReplaying
+        ? timelineEvents
+        : addTimelineEvent(
+            timelineEvents,
+            'create',
+            nextTxnNum,
+            `创建事务 T${nextTxnNum}，快照时间戳=${nextTs}`,
+            nextTs
+          ),
     });
   },
 
   commitTransaction: async (txnId: string) => {
-    const { transactions, versions, nextTs, timelineEvents } = get();
+    const { transactions, versions, nextTs, timelineEvents, isReplaying } = get();
     const txn = transactions.find((t) => t.txnId === txnId);
     if (!txn || txn.status !== 'active') return;
 
@@ -153,23 +165,23 @@ export const useMVCCStore = create<MVCCState>((set, get) => ({
       newVersions.set(rowId, updated);
     }
 
-    const newPendingWrites = new Map(get().pendingWrites);
-    newPendingWrites.delete(txnId);
+    const newTransactions = transactions.map((t) =>
+      t.txnId === txnId ? { ...t, status: 'committed' as TxnStatus, snapshotTs: commitTs, pendingWrites: [] } : t
+    );
 
     set({
-      transactions: transactions.map((t) =>
-        t.txnId === txnId ? { ...t, status: 'committed' as TxnStatus, snapshotTs: commitTs } : t
-      ),
+      transactions: newTransactions,
       versions: newVersions,
       nextTs: commitTs + 1,
-      timelineEvents: addTimelineEvent(
-        timelineEvents,
-        'commit',
-        txn.txnNum,
-        `提交事务 T${txn.txnNum}，提交时间戳=${commitTs}`,
-        commitTs
-      ),
-      pendingWrites: newPendingWrites,
+      timelineEvents: isReplaying
+        ? timelineEvents
+        : addTimelineEvent(
+            timelineEvents,
+            'commit',
+            txn.txnNum,
+            `提交事务 T${txn.txnNum}，提交时间戳=${commitTs}`,
+            commitTs
+          ),
     });
 
     await sleep(300 / get().animationSpeed);
@@ -179,7 +191,7 @@ export const useMVCCStore = create<MVCCState>((set, get) => ({
   },
 
   abortTransaction: async (txnId: string) => {
-    const { transactions, versions, timelineEvents } = get();
+    const { transactions, versions, timelineEvents, isReplaying } = get();
     const txn = transactions.find((t) => t.txnId === txnId);
     if (!txn || txn.status !== 'active') return;
 
@@ -204,24 +216,22 @@ export const useMVCCStore = create<MVCCState>((set, get) => ({
       newVersions.set(rowId, [...kept, ...pendingRemove]);
     }
 
-    const newPendingWrites = new Map(get().pendingWrites);
-    newPendingWrites.delete(txnId);
-
     const abortTs = get().nextTs;
 
     set({
       transactions: transactions.map((t) =>
-        t.txnId === txnId ? { ...t, status: 'aborted' as TxnStatus } : t
+        t.txnId === txnId ? { ...t, status: 'aborted' as TxnStatus, pendingWrites: [] } : t
       ),
       versions: newVersions,
-      timelineEvents: addTimelineEvent(
-        timelineEvents,
-        'abort',
-        txn.txnNum,
-        `回滚事务 T${txn.txnNum}`,
-        abortTs
-      ),
-      pendingWrites: newPendingWrites,
+      timelineEvents: isReplaying
+        ? timelineEvents
+        : addTimelineEvent(
+            timelineEvents,
+            'abort',
+            txn.txnNum,
+            `回滚事务 T${txn.txnNum}`,
+            abortTs
+          ),
     });
 
     await sleep(600 / get().animationSpeed);
@@ -239,7 +249,7 @@ export const useMVCCStore = create<MVCCState>((set, get) => ({
   },
 
   writeRow: async (txnId: string, rowId: number, newName?: string, newBalance?: number) => {
-    const { transactions, versions, nextTxnNum, nextTs, timelineEvents } = get();
+    const { transactions, versions, nextTs, timelineEvents, isReplaying } = get();
     const txn = transactions.find((t) => t.txnId === txnId);
     if (!txn || txn.status !== 'active') return;
     if (!versions.has(rowId)) return;
@@ -248,9 +258,41 @@ export const useMVCCStore = create<MVCCState>((set, get) => ({
 
     const rowVersions = versions.get(rowId)!;
     const currentLatest = rowVersions[0];
+    const holder = getRowHolder(versions, rowId, txn.txnNum);
+
+    if (holder !== null) {
+      const newTransactions = transactions.map((t) =>
+        t.txnId === txnId
+          ? { ...t, pendingWrites: t.pendingWrites.includes(rowId) ? t.pendingWrites : [...t.pendingWrites, rowId] }
+          : t
+      );
+
+      const writeTs = nextTs;
+
+      set({
+        transactions: newTransactions,
+        nextTs: nextTs + 1,
+        timelineEvents: isReplaying
+          ? timelineEvents
+          : addTimelineEvent(
+              timelineEvents,
+              'write',
+              txn.txnNum,
+              `T${txn.txnNum} 等待写入行#${rowId}（被 T${holder} 持有）`,
+              writeTs,
+              rowId
+            ),
+      });
+
+      await sleep(500 / get().animationSpeed);
+      set({ isAnimating: false });
+
+      get().detectDeadlocks();
+      return;
+    }
+
     const newNameVal = newName ?? currentLatest.name;
     const newBalanceVal = newBalance ?? currentLatest.balance;
-
     const writeTs = nextTs;
 
     const newVersion: Version = {
@@ -275,27 +317,31 @@ export const useMVCCStore = create<MVCCState>((set, get) => ({
     ];
     newVersions.set(rowId, updatedList);
 
-    const newPendingWrites = new Map(get().pendingWrites);
-    newPendingWrites.set(txnId, rowId);
+    const newTransactions = transactions.map((t) => {
+      if (t.txnId === txnId) {
+        return {
+          ...t,
+          writes: [...t.writes, { rowId, versionId: newVersion.versionId }],
+          pendingWrites: t.pendingWrites.filter((r) => r !== rowId),
+        };
+      }
+      return t;
+    });
 
     set({
       versions: newVersions,
       nextTs: nextTs + 1,
-      nextTxnNum: txn.txnNum === nextTxnNum ? nextTxnNum : nextTxnNum,
-      transactions: transactions.map((t) =>
-        t.txnId === txnId
-          ? { ...t, writes: [...t.writes, { rowId, versionId: newVersion.versionId }] }
-          : t
-      ),
-      timelineEvents: addTimelineEvent(
-        timelineEvents,
-        'write',
-        txn.txnNum,
-        `T${txn.txnNum} 写入行#${rowId}（${newNameVal}, ¥${newBalanceVal}）`,
-        writeTs,
-        rowId
-      ),
-      pendingWrites: newPendingWrites,
+      transactions: newTransactions,
+      timelineEvents: isReplaying
+        ? timelineEvents
+        : addTimelineEvent(
+            timelineEvents,
+            'write',
+            txn.txnNum,
+            `T${txn.txnNum} 写入行#${rowId}（${newNameVal}, ¥${newBalanceVal}）`,
+            writeTs,
+            rowId
+          ),
     });
 
     await sleep(500 / get().animationSpeed);
@@ -311,7 +357,7 @@ export const useMVCCStore = create<MVCCState>((set, get) => ({
   },
 
   readRow: async (txnId: string, rowId: number): Promise<Version | null> => {
-    const { transactions, versions, isolationLevel, timelineEvents } = get();
+    const { transactions, versions, isolationLevel, timelineEvents, isReplaying } = get();
     const txn = transactions.find((t) => t.txnId === txnId);
     if (!txn) return null;
     if (!versions.has(rowId)) return null;
@@ -401,14 +447,16 @@ export const useMVCCStore = create<MVCCState>((set, get) => ({
         steps,
         timestamp: Date.now(),
       },
-      timelineEvents: addTimelineEvent(
-        timelineEvents,
-        'read',
-        txn.txnNum,
-        `T${txn.txnNum} 读取行#${rowId}` + (foundVersion ? `→找到版本(${foundVersion.name})` : '→无可见版本'),
-        readTs,
-        rowId
-      ),
+      timelineEvents: isReplaying
+        ? timelineEvents
+        : addTimelineEvent(
+            timelineEvents,
+            'read',
+            txn.txnNum,
+            `T${txn.txnNum} 读取行#${rowId}` + (foundVersion ? `→找到版本(${foundVersion.name})` : '→无可见版本'),
+            readTs,
+            rowId
+          ),
     });
 
     for (let i = 0; i < steps.length; i++) {
@@ -470,48 +518,46 @@ export const useMVCCStore = create<MVCCState>((set, get) => ({
   toggleTimeline: () => set((s) => ({ timelineOpen: !s.timelineOpen })),
 
   startReplay: async () => {
-    const { timelineEvents, replaySpeed } = get();
+    const { timelineEvents, replaySpeed, transactions, versions, nextTxnNum, nextTs } = get();
     if (timelineEvents.length === 0) return;
 
-    set({ isReplaying: true, replayIndex: 0 });
-
-    const savedState = {
-      transactions: get().transactions,
-      versions: get().versions,
-      nextTxnNum: get().nextTxnNum,
-      nextTs: get().nextTs,
-    };
+    const originalTimelineEvents = [...timelineEvents];
 
     set({
+      isReplaying: true,
+      replayIndex: 0,
       transactions: [],
       versions: createInitialVersions(),
       nextTxnNum: INITIAL_ROWS.length + 1,
       nextTs: INITIAL_ROWS.length + 1,
       readResult: null,
+      deadlocks: [],
+      deadlockWarning: null,
+      timelineEvents: originalTimelineEvents,
     });
 
     await sleep(500 / replaySpeed);
 
-    for (let i = 0; i < timelineEvents.length; i++) {
+    for (let i = 0; i < originalTimelineEvents.length; i++) {
       if (!get().isReplaying) break;
 
       set({ replayIndex: i });
 
-      const event = timelineEvents[i];
+      const event = originalTimelineEvents[i];
       switch (event.type) {
         case 'create':
           get().createTransaction();
           break;
         case 'write': {
           const txn = get().transactions.find((t) => t.txnNum === event.txnNum && t.status === 'active');
-          if (txn && event.rowId) {
+          if (txn && event.rowId !== undefined) {
             await get().writeRow(txn.txnId, event.rowId);
           }
           break;
         }
         case 'read': {
           const txn = get().transactions.find((t) => t.txnNum === event.txnNum);
-          if (txn && event.rowId) {
+          if (txn && event.rowId !== undefined) {
             await get().readRow(txn.txnId, event.rowId);
           }
           break;
@@ -539,10 +585,15 @@ export const useMVCCStore = create<MVCCState>((set, get) => ({
 
     if (get().isReplaying) {
       set({
-        ...savedState,
-        timelineEvents: get().timelineEvents,
+        transactions,
+        versions,
+        nextTxnNum,
+        nextTs,
+        timelineEvents: originalTimelineEvents,
         isReplaying: false,
         replayIndex: -1,
+        deadlocks: [],
+        deadlockWarning: null,
       });
     }
   },
@@ -554,7 +605,7 @@ export const useMVCCStore = create<MVCCState>((set, get) => ({
   setReplaySpeed: (speed: number) => set({ replaySpeed: speed }),
 
   detectDeadlocks: () => {
-    const { transactions, pendingWrites } = get();
+    const { transactions } = get();
     const activeTxns = transactions.filter((t) => t.status === 'active');
     const txnHoldMap = new Map<number, number[]>();
     const txnWaitMap = new Map<number, number>();
@@ -566,8 +617,7 @@ export const useMVCCStore = create<MVCCState>((set, get) => ({
       }
       txnHoldMap.set(txn.txnNum, heldRows);
 
-      const pendingRow = pendingWrites.get(txn.txnId);
-      if (pendingRow !== undefined) {
+      for (const pendingRow of txn.pendingWrites) {
         txnWaitMap.set(txn.txnNum, pendingRow);
       }
     }
@@ -592,7 +642,7 @@ export const useMVCCStore = create<MVCCState>((set, get) => ({
           const deadlock: DeadlockInfo = {
             txnNums: [txnA.txnNum, txnB.txnNum],
             rowIds: [aWants, bWants],
-            description: `T${txnA.txnNum}(持有行#${aHolds.find(r => r === bWants)}, 等待行#${aWants}) ↔ T${txnB.txnNum}(持有行#${bHolds.find(r => r === aWants)}, 等待行#${bWants})`,
+            description: `T${txnA.txnNum}(持有行#${aHolds.find((r) => r === bWants)}, 等待行#${aWants}) ↔ T${txnB.txnNum}(持有行#${bHolds.find((r) => r === aWants)}, 等待行#${bWants})`,
           };
           const alreadyExists = newDeadlocks.some(
             (d) =>
@@ -607,18 +657,23 @@ export const useMVCCStore = create<MVCCState>((set, get) => ({
     }
 
     const currentDeadlocks = get().deadlocks;
-    const hasNewDeadlock = newDeadlocks.length > 0 && !currentDeadlocks.some(
-      (cd) =>
+    const hasNewDeadlock =
+      newDeadlocks.length > 0 &&
+      !currentDeadlocks.some((cd) =>
         newDeadlocks.some(
           (nd) =>
             (cd.txnNums[0] === nd.txnNums[0] && cd.txnNums[1] === nd.txnNums[1]) ||
             (cd.txnNums[0] === nd.txnNums[1] && cd.txnNums[1] === nd.txnNums[0])
         )
-    );
+      );
 
     set({
       deadlocks: newDeadlocks,
-      deadlockWarning: hasNewDeadlock ? newDeadlocks[0] : newDeadlocks.length > 0 ? get().deadlockWarning : null,
+      deadlockWarning: hasNewDeadlock
+        ? newDeadlocks[0]
+        : newDeadlocks.length > 0
+          ? get().deadlockWarning
+          : null,
     });
   },
 
@@ -634,7 +689,7 @@ export const useMVCCStore = create<MVCCState>((set, get) => ({
   },
 
   runGC: async () => {
-    const { transactions, versions, nextTs, timelineEvents, isAnimating } = get();
+    const { transactions, versions, nextTs, timelineEvents, isAnimating, isReplaying } = get();
     if (isAnimating) return;
 
     const activeTxns = transactions.filter((t) => t.status === 'active');
@@ -648,21 +703,34 @@ export const useMVCCStore = create<MVCCState>((set, get) => ({
     const collectibleIds: string[] = [];
     for (const [, versionList] of versions) {
       for (const v of versionList) {
-        if (
-          v.xmax !== null &&
-          v.xmaxStatus === 'committed' &&
-          v.xmax < minSnapshotTs
-        ) {
+        if (v.xmax !== null && v.xmaxStatus === 'committed' && v.xmax < minSnapshotTs) {
           collectibleIds.push(v.versionId);
         }
       }
     }
 
-    if (collectibleIds.length === 0) return;
+    if (collectibleIds.length === 0) {
+      set({
+        gcState: {
+          phase: 'idle',
+          markedVersionIds: [],
+          sweepingVersionId: null,
+          sweepIndex: 0,
+          noOpMessage: '✅ 没有可回收的死版本（当前所有版本均为活跃或被需要）',
+        },
+      });
+      return;
+    }
 
     set({
       isAnimating: true,
-      gcState: { phase: 'marking', markedVersionIds: collectibleIds, sweepingVersionId: null, sweepIndex: 0 },
+      gcState: {
+        phase: 'marking',
+        markedVersionIds: collectibleIds,
+        sweepingVersionId: null,
+        sweepIndex: 0,
+        noOpMessage: null,
+      },
     });
 
     const markedVersions = new Map(versions);
@@ -679,22 +747,32 @@ export const useMVCCStore = create<MVCCState>((set, get) => ({
     await sleep(2000 / get().animationSpeed);
 
     set({
-      gcState: { phase: 'sweeping', markedVersionIds: collectibleIds, sweepingVersionId: collectibleIds[0], sweepIndex: 0 },
+      gcState: {
+        phase: 'sweeping',
+        markedVersionIds: collectibleIds,
+        sweepingVersionId: collectibleIds[0],
+        sweepIndex: 0,
+        noOpMessage: null,
+      },
     });
 
     for (let i = 0; i < collectibleIds.length; i++) {
       const vid = collectibleIds[i];
       set({
-        gcState: { phase: 'sweeping', markedVersionIds: collectibleIds, sweepingVersionId: vid, sweepIndex: i },
+        gcState: {
+          phase: 'sweeping',
+          markedVersionIds: collectibleIds,
+          sweepingVersionId: vid,
+          sweepIndex: i,
+          noOpMessage: null,
+        },
       });
 
       const sweepVersions = new Map(get().versions);
       for (const [rowId, versionList] of sweepVersions) {
         sweepVersions.set(
           rowId,
-          versionList.map((v) =>
-            v.versionId === vid ? { ...v, isRemoving: true } : v
-          )
+          versionList.map((v) => (v.versionId === vid ? { ...v, isRemoving: true } : v))
         );
       }
       set({ versions: sweepVersions });
@@ -711,21 +789,33 @@ export const useMVCCStore = create<MVCCState>((set, get) => ({
     set({
       versions: finalVersions,
       nextTs: gcTs + 1,
-      gcState: { phase: 'done', markedVersionIds: [], sweepingVersionId: null, sweepIndex: 0 },
-      timelineEvents: addTimelineEvent(
-        get().timelineEvents,
-        'gc',
-        0,
-        `GC清理: 回收${collectibleIds.length}个死版本`,
-        gcTs
-      ),
+      gcState: {
+        phase: 'done',
+        markedVersionIds: [],
+        sweepingVersionId: null,
+        sweepIndex: 0,
+        noOpMessage: null,
+      },
+      timelineEvents: isReplaying
+        ? timelineEvents
+        : addTimelineEvent(timelineEvents, 'gc', 0, `GC清理: 回收${collectibleIds.length}个死版本`, gcTs),
     });
 
     await sleep(300 / get().animationSpeed);
     set({
       isAnimating: false,
-      gcState: { phase: 'idle', markedVersionIds: [], sweepingVersionId: null, sweepIndex: 0 },
+      gcState: {
+        phase: 'idle',
+        markedVersionIds: [],
+        sweepingVersionId: null,
+        sweepIndex: 0,
+        noOpMessage: null,
+      },
     });
+  },
+
+  clearGCNoOp: () => {
+    set((s) => ({ gcState: { ...s.gcState, noOpMessage: null } }));
   },
 
   reset: () => {
@@ -742,8 +832,13 @@ export const useMVCCStore = create<MVCCState>((set, get) => ({
       replayIndex: -1,
       deadlocks: [],
       deadlockWarning: null,
-      gcState: { phase: 'idle', markedVersionIds: [], sweepingVersionId: null, sweepIndex: 0 },
-      pendingWrites: new Map(),
+      gcState: {
+        phase: 'idle',
+        markedVersionIds: [],
+        sweepingVersionId: null,
+        sweepIndex: 0,
+        noOpMessage: null,
+      },
     });
   },
 }));

@@ -165,6 +165,22 @@ const TxnCard = forwardRef<HTMLDivElement, TxnCardProps>(function TxnCard(
           </div>
         </div>
       )}
+
+      {txn.pendingWrites.length > 0 && (
+        <div className="mt-2 pt-2 border-t border-slate-100" style={{ pointerEvents: 'auto' }}>
+          <div className="text-xs text-orange-500 mb-1 font-medium flex items-center gap-1">
+            <span className="animate-pulse">⏳</span>
+            等待写入锁:
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {txn.pendingWrites.map((rowId) => (
+              <span key={rowId} className="text-xs bg-orange-50 text-orange-700 px-1.5 py-0.5 rounded border border-orange-200 animate-pulse">
+                #{rowId}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
     </Reorder.Item>
   );
 });

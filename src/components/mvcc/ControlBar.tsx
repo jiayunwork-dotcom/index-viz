@@ -21,6 +21,7 @@ export default function ControlBar() {
     dismissDeadlockWarning,
     resolveDeadlock,
     gcState,
+    clearGCNoOp,
   } = useMVCCStore();
 
   const totalVersions = Array.from(versions.values()).reduce((sum, v) => sum + v.length, 0);
@@ -194,6 +195,32 @@ export default function ControlBar() {
                   忽略
                 </button>
               </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {gcState.noOpMessage && (
+          <motion.div
+            initial={{ opacity: 0, y: 10, height: 0 }}
+            animate={{ opacity: 1, y: 0, height: 'auto' }}
+            exit={{ opacity: 0, y: 10, height: 0 }}
+            transition={{ duration: 0.3, ease: 'easeOut' }}
+            className="overflow-hidden"
+          >
+            <div className="bg-slate-50 border-2 border-slate-300 rounded-lg p-3 flex items-center gap-4">
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <span className="text-xl">ℹ️</span>
+                <div className="text-sm font-medium text-slate-700">{gcState.noOpMessage}</div>
+              </div>
+              <div className="flex-1" />
+              <button
+                onClick={clearGCNoOp}
+                className="btn-secondary text-xs"
+              >
+                关闭
+              </button>
             </div>
           </motion.div>
         )}

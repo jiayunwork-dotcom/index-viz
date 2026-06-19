@@ -31,6 +31,7 @@ export interface Transaction {
   snapshotTs: number;
   displayOrder: number;
   writes: { rowId: number; versionId: string }[];
+  pendingWrites: number[];
   isDragging?: boolean;
 }
 
@@ -86,6 +87,7 @@ export interface GCState {
   markedVersionIds: string[];
   sweepingVersionId: string | null;
   sweepIndex: number;
+  noOpMessage: string | null;
 }
 
 export const INITIAL_ROWS: DataRow[] = [
