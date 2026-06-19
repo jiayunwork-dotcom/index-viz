@@ -1,8 +1,9 @@
-import { MutableRefObject } from 'react';
+import { forwardRef } from 'react';
 import { Reorder, useDragControls } from 'framer-motion';
 import { useMVCCStore } from '@/store/mvccStore';
 import type { Transaction } from '@/structures/mvcc/types';
 import { cn } from '@/lib/utils';
+import type { MutableRefObject } from 'react';
 
 interface TxnCardProps {
   txn: Transaction;
@@ -18,16 +19,12 @@ const statusConfig = {
   aborted: { label: '已回滚', color: 'bg-red-100 text-red-700 border-red-200', dot: 'bg-red-500' },
 };
 
-export default function TxnCard({
-  txn,
-  index,
-  dragIndexRef,
-  onOpenWrite,
-  onOpenRead,
-}: TxnCardProps) {
+const TxnCard = forwardRef<HTMLDivElement, TxnCardProps>(function TxnCard(
+  { txn, index, dragIndexRef, onOpenWrite, onOpenRead },
+  ref
+) {
   const { commitTransaction, abortTransaction, isAnimating } = useMVCCStore();
   const controls = useDragControls();
-
   const cfg = statusConfig[txn.status];
   const isActive = txn.status === 'active';
 
@@ -42,7 +39,7 @@ export default function TxnCard({
       onDragEnd={() => {
         dragIndexRef.current = null;
       }}
-      as="div"
+      ref={ref}
       initial={{ opacity: 0, y: -10, scale: 0.95 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, x: -20, scale: 0.9 }}
@@ -51,8 +48,9 @@ export default function TxnCard({
         'card p-3 transition-shadow hover:shadow-md',
         txn.status === 'aborted' && 'opacity-70'
       )}
+      style={{ position: 'relative' }}
     >
-      <div className="flex items-start justify-between mb-2">
+      <div className="flex items-start justify-between mb-2" style={{ pointerEvents: 'auto' }}>
         <div className="flex items-center gap-2">
           <div
             className={cn(
@@ -79,7 +77,7 @@ export default function TxnCard({
         </span>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 mb-3 text-xs select-none">
+      <div className="grid grid-cols-2 gap-2 mb-3 text-xs select-none" style={{ pointerEvents: 'auto' }}>
         <div className="bg-slate-50 rounded px-2 py-1.5">
           <div className="text-slate-400">开始时间戳</div>
           <div className="font-mono font-semibold text-slate-700">{txn.startTs}</div>
@@ -90,16 +88,19 @@ export default function TxnCard({
         </div>
       </div>
 
-      <div className="flex gap-1.5">
+      <div className="flex gap-1.5" style={{ pointerEvents: 'auto', position: 'relative', zIndex: 10 }}>
         <button
           type="button"
           onClick={(e) => {
             e.stopPropagation();
+            e.preventDefault();
             onOpenRead(txn.txnId);
           }}
+          onMouseDown={(e) => e.stopPropagation()}
           onPointerDown={(e) => e.stopPropagation()}
           disabled={!isActive || isAnimating}
           className="flex-1 btn-secondary text-xs py-1"
+          style={{ pointerEvents: 'auto' }}
         >
           读取
         </button>
@@ -107,11 +108,14 @@ export default function TxnCard({
           type="button"
           onClick={(e) => {
             e.stopPropagation();
+            e.preventDefault();
             onOpenWrite(txn.txnId);
           }}
+          onMouseDown={(e) => e.stopPropagation()}
           onPointerDown={(e) => e.stopPropagation()}
           disabled={!isActive || isAnimating}
           className="flex-1 btn-secondary text-xs py-1"
+          style={{ pointerEvents: 'auto' }}
         >
           写入
         </button>
@@ -119,11 +123,14 @@ export default function TxnCard({
           type="button"
           onClick={(e) => {
             e.stopPropagation();
+            e.preventDefault();
             commitTransaction(txn.txnId);
           }}
+          onMouseDown={(e) => e.stopPropagation()}
           onPointerDown={(e) => e.stopPropagation()}
           disabled={!isActive || isAnimating}
           className="flex-1 btn-success text-xs py-1"
+          style={{ pointerEvents: 'auto' }}
         >
           提交
         </button>
@@ -131,18 +138,21 @@ export default function TxnCard({
           type="button"
           onClick={(e) => {
             e.stopPropagation();
+            e.preventDefault();
             abortTransaction(txn.txnId);
           }}
+          onMouseDown={(e) => e.stopPropagation()}
           onPointerDown={(e) => e.stopPropagation()}
           disabled={!isActive || isAnimating}
           className="flex-1 btn-danger text-xs py-1"
+          style={{ pointerEvents: 'auto' }}
         >
           回滚
         </button>
       </div>
 
       {txn.writes.length > 0 && (
-        <div className="mt-2 pt-2 border-t border-slate-100">
+        <div className="mt-2 pt-2 border-t border-slate-100" style={{ pointerEvents: 'auto' }}>
           <div className="text-xs text-slate-400 mb-1">已写入行:</div>
           <div className="flex flex-wrap gap-1">
             {txn.writes.map((w) => (
@@ -155,4 +165,6 @@ export default function TxnCard({
       )}
     </Reorder.Item>
   );
-}
+});
+
+export default TxnCard;
