@@ -12,6 +12,7 @@ import ComparisonPage from './pages/ComparisonPage';
 import LessonsPage from './pages/LessonsPage';
 import CustomPage from './pages/CustomPage';
 import WALPage from './pages/WALPage';
+import MVCCPage from './pages/MVCCPage';
 
 export default function App() {
   return (
@@ -22,13 +23,14 @@ export default function App() {
         <Route path="fragmentation" element={<FragmentationPage />} />
         <Route path="hash" element={<HashPage />} />
         <Route path="lsm" element={<LSMTreePage />} />
+        <Route path="wal" element={<WALPage />} />
         <Route path="skiplist" element={<SkipListPage />} />
         <Route path="bloom" element={<BloomFilterPage />} />
         <Route path="rtree" element={<RTreePage />} />
+        <Route path="mvcc" element={<MVCCPage />} />
         <Route path="comparison" element={<ComparisonPage />} />
         <Route path="lessons" element={<LessonsPage />} />
         <Route path="custom" element={<CustomPage />} />
-        <Route path="wal" element={<WALPage />} />
       </Route>
     </Routes>
   );
